@@ -69,6 +69,7 @@ Consultez les fichiers dans l'ordre :
 03_FORMAT_RAPPORT.md              → Format du rapport
 04_INSTALLATION.md                → Guide d'installation
 05_TESTS_QUALITE.md               → Critères de validation
+06_IMPLEMENTATION_COUVERTURE_RAPPORT.md → Implémentation couverture/limites
 ```
 
 ### Étape 2 : Consulter les références
@@ -77,7 +78,16 @@ Lisez attentivement :
 - `docs/ISIT-RGAA.pdf` pour le format de rapport à reproduire (si disponible)
 
 ### Étape 3 : Implémenter
+
 Suivez les priorités de développement ci-dessus.
+
+**⚠️ ATTENTION PARTICULIÈRE** : Le fichier **`06_IMPLEMENTATION_COUVERTURE_RAPPORT.md`** contient des instructions CRITIQUES pour implémenter :
+- Les sections de couverture de l'audit (98-100% pour 2.1, 30-40% pour 2.2)
+- Les avertissements sur les limites de l'automatisation
+- Les mentions légales sur la responsabilité
+- Le calcul des métriques et du temps de vérification manuelle
+
+**Ces sections sont OBLIGATOIRES dans chaque rapport** pour la transparence et la conformité légale.
 
 ## Structure du projet attendue
 
@@ -92,7 +102,9 @@ rgaa-section2-tester/
 │   ├── 03_FORMAT_RAPPORT.md
 │   ├── 04_INSTALLATION.md
 │   ├── 05_TESTS_QUALITE.md
-│   └── RGAA_Section2_Extract.md    # Aussi ici pour référence
+│   ├── 06_IMPLEMENTATION_COUVERTURE_RAPPORT.md  # NOUVEAU
+│   ├── RGAA_Section2_Extract.md    # Aussi ici pour référence
+│   └── Exemple_Rapport_Avec_Couverture.md
 ├── main.py                         # Point d'entrée
 ├── rgaa_tester/                    # Package principal
 │   ├── __init__.py
@@ -113,6 +125,7 @@ rgaa-section2-tester/
 - [ ] Application Python complète et fonctionnelle
 - [ ] Interface GUI avec tkinter
 - [ ] Générateur de rapports Markdown (format ISIT)
+- [ ] **Rapports incluant section "Couverture de l'audit" et "Limites"**
 - [ ] `requirements.txt`
 - [ ] `INSTALLATION.md` complet
 - [ ] `README.md` avec guide d'utilisation
