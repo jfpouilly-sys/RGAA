@@ -20,9 +20,10 @@ Ce projet est documenté à travers plusieurs fichiers de spécifications :
 
 Placez ces documents dans le dossier `docs/` :
 
-- **`RGAA_4.1.2_Section2.pdf`** - Référentiel technique officiel (CRITIQUE)
+- **`RGAA_Section2_Extract.md`** - Extrait condensé Section 2 (CRITIQUE - FOURNI)
 - **`ISIT-RGAA.pdf`** - Modèle de rapport de référence (IMPORTANT)
-- **`RGAA_glossaire.pdf`** - Glossaire RGAA (optionnel)
+
+**Note importante** : Le fichier `RGAA_Section2_Extract.md` est un extrait condensé spécifiquement créé pour Claude Code, contenant UNIQUEMENT les informations nécessaires de la Section 2 du RGAA 4.1.2 (critères, tests, exemples, algorithmes). Ne fournissez PAS le RGAA complet qui est trop volumineux.
 
 ## Objectifs du projet
 
@@ -72,8 +73,8 @@ Consultez les fichiers dans l'ordre :
 
 ### Étape 2 : Consulter les références
 Lisez attentivement :
-- `docs/RGAA_4.1.2_Section2.pdf` pour la méthodologie exacte
-- `docs/ISIT-RGAA.pdf` pour le format de rapport à reproduire
+- `specifications/RGAA_Section2_Extract.md` pour la méthodologie RGAA exacte
+- `docs/ISIT-RGAA.pdf` pour le format de rapport à reproduire (si disponible)
 
 ### Étape 3 : Implémenter
 Suivez les priorités de développement ci-dessus.
@@ -83,15 +84,15 @@ Suivez les priorités de développement ci-dessus.
 ```
 rgaa-section2-tester/
 ├── docs/                           # Documentation de référence
-│   ├── RGAA_4.1.2_Section2.pdf
-│   ├── ISIT-RGAA.pdf
-│   └── RGAA_glossaire.pdf
+│   ├── RGAA_Section2_Extract.md    # Extrait RGAA Section 2 (FOURNI)
+│   └── ISIT-RGAA.pdf               # Modèle de rapport
 ├── specifications/                 # Spécifications techniques
 │   ├── 01_SPECIFICATIONS_TECHNIQUES.md
 │   ├── 02_SPECIFICATIONS_GUI.md
 │   ├── 03_FORMAT_RAPPORT.md
 │   ├── 04_INSTALLATION.md
-│   └── 05_TESTS_QUALITE.md
+│   ├── 05_TESTS_QUALITE.md
+│   └── RGAA_Section2_Extract.md    # Aussi ici pour référence
 ├── main.py                         # Point d'entrée
 ├── rgaa_tester/                    # Package principal
 │   ├── __init__.py

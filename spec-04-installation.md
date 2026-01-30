@@ -256,9 +256,10 @@ mkdir docs
 
 Placez les documents suivants dans le dossier `docs/` :
 
-- **RGAA_4.1.2_Section2.pdf** - Référentiel technique officiel
+- **RGAA_Section2_Extract.md** - Extrait condensé Section 2 (FOURNI avec le projet)
 - **ISIT-RGAA.pdf** - Modèle de rapport (si disponible)
-- **RGAA_glossaire.pdf** - Glossaire (optionnel)
+
+**Note** : Le fichier `RGAA_Section2_Extract.md` est fourni avec le projet dans le dossier `specifications/`. Copiez-le dans `docs/` pour référence.
 
 ### 3. Configuration de l'application
 
