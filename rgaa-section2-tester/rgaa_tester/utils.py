@@ -5,9 +5,11 @@ Module utilitaire pour RGAA Section 2 Tester
 Fonctions utilitaires diverses pour le traitement d'URLs, de texte, etc.
 """
 
+import platform
 import re
+import sys
 from datetime import datetime
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 from urllib.parse import urljoin, urlparse
 
 
@@ -373,3 +375,33 @@ def obtenir_emoji_statut(statut: str) -> str:
         "À vérifier": "🔍"
     }
     return emojis.get(statut, "❓")
+
+
+def get_system_info() -> Dict[str, str]:
+    """
+    Récupère les informations sur l'environnement d'exécution.
+
+    Returns:
+        dict: Informations système
+    """
+    info = {
+        'os_name': platform.system(),
+        'os_version': platform.version(),
+        'os_full_info': f"{platform.system()} {platform.release()}",
+        'python_version': f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+        'app_version': '1.0.0'
+    }
+
+    # Tenter de détecter la version de Selenium
+    try:
+        from selenium import __version__ as selenium_version
+        info['selenium_version'] = selenium_version
+    except (ImportError, AttributeError):
+        info['selenium_version'] = 'Non disponible'
+
+    # Informations navigateur (à détecter dynamiquement si possible)
+    # Pour l'instant, on utilise des valeurs par défaut
+    info['browser_name'] = 'Google Chrome'
+    info['browser_version'] = 'Dernière version'
+
+    return info

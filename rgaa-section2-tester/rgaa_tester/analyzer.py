@@ -43,12 +43,19 @@ class DonnesCadre:
     src: Optional[str] = None
 
     # Attributs de titre
+    has_title: bool = False
     title: Optional[str] = None
     longueur_titre: int = 0
 
     # Attributs ARIA (pour référence)
     aria_label: Optional[str] = None
     aria_labelledby: Optional[str] = None
+
+    # Flags pour critère 2.2
+    is_generic_title: bool = False
+    is_short_title: bool = False
+    needs_manual_check: bool = False
+    auto_evaluation: str = "À vérifier"  # 'Semble pertinent' | 'Suspect' | 'À vérifier'
 
     # Statut de visibilité
     est_cache: bool = False
@@ -76,16 +83,22 @@ class DonnesCadre:
             'id': self.id_element,
             'class': self.classe,
             'src': self.src,
+            'has_title': self.has_title,
             'title': self.title,
             'longueur_titre': self.longueur_titre,
             'aria_label': self.aria_label,
             'aria_labelledby': self.aria_labelledby,
             'est_cache': self.est_cache,
+            'is_exempted': self.est_cache,  # Alias pour compatibilité
             'raison_cache': self.raison_cache,
             'resultat_2_1': self.resultat_test_2_1.value,
             'resultat_2_2': self.resultat_test_2_2.value,
             'necessite_verification': self.necessite_verification_2_2,
+            'needs_manual_check': self.needs_manual_check,
             'alertes': self.alertes_2_2,
+            'is_generic_title': self.is_generic_title,
+            'is_short_title': self.is_short_title,
+            'auto_evaluation': self.auto_evaluation,
             'priorite': self.priorite.value if self.priorite else None,
             'url_page': self.url_page,
             'code_html': self.code_html
@@ -228,6 +241,9 @@ class AnalyseurRGAA:
         if donnees.title:
             donnees.title = nettoyer_texte(donnees.title)
             donnees.longueur_titre = len(donnees.title)
+            donnees.has_title = True if donnees.longueur_titre > 0 else False
+        else:
+            donnees.has_title = False
 
         # Extraire les attributs ARIA (pour information)
         donnees.aria_label = element.get('aria-label')
@@ -285,10 +301,12 @@ class AnalyseurRGAA:
         # Si pas de titre, le test 2.2 n'est pas applicable
         if not donnees.title:
             donnees.resultat_test_2_2 = ResultatTest.NON_APPLICABLE
+            donnees.needs_manual_check = False
             return
 
         # Tout titre existant nécessite une vérification manuelle
         donnees.necessite_verification_2_2 = True
+        donnees.needs_manual_check = True
         donnees.resultat_test_2_2 = ResultatTest.A_VERIFIER
         alertes = []
 
@@ -298,11 +316,13 @@ class AnalyseurRGAA:
         if self._detecter_generiques:
             for generique in self._titres_generiques:
                 if titre_lower == generique.lower():
+                    donnees.is_generic_title = True
                     alertes.append(f"Titre générique détecté : \"{donnees.title}\"")
                     break
 
         # Vérifier la longueur du titre
         if donnees.longueur_titre < self._longueur_min_titre:
+            donnees.is_short_title = True
             alertes.append(f"Titre très court ({donnees.longueur_titre} caractères)")
 
         # Vérifier si le titre contient uniquement des chiffres
@@ -315,6 +335,12 @@ class AnalyseurRGAA:
             alertes.append("Titre technique non descriptif")
 
         donnees.alertes_2_2 = alertes
+
+        # Déterminer l'évaluation automatique
+        if donnees.is_generic_title or donnees.is_short_title or len(alertes) > 0:
+            donnees.auto_evaluation = "Suspect"
+        else:
+            donnees.auto_evaluation = "Semble pertinent"
 
     def _determiner_priorite(self, donnees: DonnesCadre) -> None:
         """
@@ -367,6 +393,72 @@ class AnalyseurRGAA:
             "Vérifier manuellement que le titre est suffisamment descriptif pour permettre "
             "aux utilisateurs de technologies d'assistance de comprendre le contenu du cadre."
         )
+
+    def calculate_coverage_metrics(self, pages: List[ResultatPage]) -> Dict[str, Any]:
+        """
+        Calcule les métriques de couverture de l'audit automatique.
+
+        Args:
+            pages: Liste des résultats d'analyse de toutes les pages
+
+        Returns:
+            dict: Métriques de couverture
+        """
+        metrics = {
+            # Compteurs critère 2.1
+            'total_frames': 0,
+            'frames_with_title': 0,
+            'frames_without_title': 0,
+            'frames_empty_title': 0,
+            'frames_exempted': 0,  # Cachés, donc exemptés
+
+            # Compteurs critère 2.2
+            'frames_generic_title': 0,
+            'frames_short_title': 0,
+            'frames_to_verify': 0,
+
+            # Métriques de couverture
+            'criterion_2_1_coverage': 98,  # Pourcentage automatique
+            'criterion_2_2_coverage': 35,  # Pourcentage automatique (flagging)
+            'overall_coverage': 65,        # Pourcentage global automatique
+
+            # Temps estimé
+            'estimated_manual_time_minutes': 0
+        }
+
+        for page in pages:
+            for cadre in page.cadres:
+                # Ne compter que les frames testées (non exemptées)
+                if not cadre.est_cache:
+                    metrics['total_frames'] += 1
+
+                    # Critère 2.1
+                    if cadre.has_title:
+                        metrics['frames_with_title'] += 1
+                    else:
+                        metrics['frames_without_title'] += 1
+
+                    if cadre.title and cadre.title.strip() == '':
+                        metrics['frames_empty_title'] += 1
+
+                    # Critère 2.2 - Flags
+                    if cadre.is_generic_title:
+                        metrics['frames_generic_title'] += 1
+
+                    if cadre.is_short_title:
+                        metrics['frames_short_title'] += 1
+                else:
+                    metrics['frames_exempted'] += 1
+
+        # Tous les frames avec titre nécessitent vérification manuelle
+        metrics['frames_to_verify'] = metrics['frames_with_title']
+
+        # Estimation temps: 1.5 minute par frame à vérifier
+        # Arrondi au multiple de 5 supérieur
+        raw_time = metrics['frames_to_verify'] * 1.5
+        metrics['estimated_manual_time_minutes'] = int((raw_time + 4) // 5 * 5)
+
+        return metrics
 
 
 @dataclass

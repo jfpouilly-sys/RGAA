@@ -95,14 +95,15 @@ Suivez les priorités de développement ci-dessus.
 rgaa-section2-tester/
 ├── docs/                           # Documentation de référence
 │   ├── RGAA_Section2_Extract.md    # Extrait RGAA Section 2 (FOURNI)
-│   └── ISIT-RGAA.pdf               # Modèle de rapport
+│   ├── ISIT-RGAA.pdf               # Modèle de rapport
+│   └── GUIDE_VERIFICATION_MANUELLE_Critere_2.2.md  # Guide pour auditeurs
 ├── specifications/                 # Spécifications techniques
 │   ├── 01_SPECIFICATIONS_TECHNIQUES.md
 │   ├── 02_SPECIFICATIONS_GUI.md
 │   ├── 03_FORMAT_RAPPORT.md
 │   ├── 04_INSTALLATION.md
 │   ├── 05_TESTS_QUALITE.md
-│   ├── 06_IMPLEMENTATION_COUVERTURE_RAPPORT.md  # NOUVEAU
+│   ├── 06_IMPLEMENTATION_COUVERTURE_RAPPORT.md
 │   ├── RGAA_Section2_Extract.md    # Aussi ici pour référence
 │   └── Exemple_Rapport_Avec_Couverture.md
 ├── main.py                         # Point d'entrée
