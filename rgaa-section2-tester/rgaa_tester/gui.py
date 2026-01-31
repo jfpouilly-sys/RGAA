@@ -139,7 +139,7 @@ class ApplicationRGAA(tk.Tk):
         # Nombre max de pages
         ttk.Label(frame_options, text="Max pages :").pack(side=tk.LEFT)
         self.spin_max_pages = ttk.Spinbox(
-            frame_options, from_=1, to=100, width=5,
+            frame_options, from_=1, to=300, width=5,
             state="readonly"
         )
         self.spin_max_pages.set(10)
