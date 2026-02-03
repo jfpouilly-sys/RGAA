@@ -63,8 +63,8 @@ class ODSAuditAnalyzer:
                 criterion.status = Status.NOT_APPLICABLE
                 criterion.modifications = "Page absente ou URL invalide"
 
-            # Save CSV for this page (contains NA status from memory)
-            csv_path = self.save_page_csv(page_id)
+            # Save CSV for this page (use memory data since ODS not updated)
+            csv_path = self.save_page_csv(page_id, use_memory_data=True)
             if csv_path and hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
                 self.crawler._callback_log(f"💾 CSV sauvegardé: {csv_path}")
 
@@ -404,52 +404,61 @@ class ODSAuditAnalyzer:
 
         return summary
 
-    def save_page_csv(self, page_id: str, output_dir: str = ".") -> str:
+    def save_page_csv(self, page_id: str, output_dir: str = ".", use_memory_data: bool = False) -> str:
         """
         Save page test results to a CSV file.
+
+        Exports the Pxx tab directly from ODS, preserving all rows
+        with their current test results.
 
         Args:
             page_id: Page identifier (P01, P02, etc.)
             output_dir: Directory to save the CSV file (default: current directory)
+            use_memory_data: If True, use in-memory data instead of ODS
 
         Returns:
             Path to the saved CSV file
         """
-        page_data = self.handler.get_page_audit(page_id)
-        if not page_data:
-            return ""
-
         # Create CSV filename
         csv_filename = f"{page_id}.csv"
         csv_path = os.path.join(output_dir, csv_filename)
 
-        # Write CSV file (overwrite if exists)
-        with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
-            writer = csv.writer(csvfile, delimiter=';', quoting=csv.QUOTE_MINIMAL)
+        if use_memory_data:
+            # Export from in-memory data (for absent pages)
+            page_data = self.handler.get_page_audit(page_id)
+            if not page_data:
+                return ""
 
-            # Write header
-            writer.writerow([
-                'Thématique',
-                'Critère',
-                'Description',
-                'Statut',
-                'Dérogation',
-                'Modifications',
-                'Commentaires',
-                'Date de modification'
-            ])
+            with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.writer(csvfile, delimiter=';', quoting=csv.QUOTE_MINIMAL)
 
-            # Write criteria rows
-            for criterion in page_data.criteria:
+                # Write header
                 writer.writerow([
-                    criterion.theme,
-                    criterion.criterion_id,
-                    criterion.description,
-                    criterion.status.value,
-                    criterion.derogation.value,
-                    criterion.modifications,
-                    criterion.comments,
-                    criterion.modification_date
+                    'Thématique',
+                    'Critère',
+                    'Description',
+                    'Statut',
+                    'Dérogation',
+                    'Modifications',
+                    'Commentaires',
+                    'Date de modification'
                 ])
 
-        return csv_path
+                # Write criteria rows
+                for criterion in page_data.criteria:
+                    writer.writerow([
+                        criterion.theme,
+                        criterion.criterion_id,
+                        criterion.description,
+                        criterion.status.value,
+                        criterion.derogation.value,
+                        criterion.modifications,
+                        criterion.comments,
+                        criterion.modification_date
+                    ])
+
+            return csv_path
+        else:
+            # Export directly from ODS sheet (preserves all rows)
+            success = self.handler.export_page_to_csv(page_id, csv_path)
+            return csv_path if success else ""

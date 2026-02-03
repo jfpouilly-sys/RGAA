@@ -550,3 +550,55 @@ class RGAAAuditODSHandler:
             self.load()
 
         return self.audit_data.get_global_statistics()
+
+    def export_page_to_csv(self, page_id: str, output_path: str) -> bool:
+        """
+        Export a page sheet directly to CSV file.
+
+        Reads all rows from the ODS sheet and writes them to CSV,
+        preserving the exact structure of the Pxx tab.
+
+        Args:
+            page_id: Page identifier (P01, P02, etc.)
+            output_path: Path to the output CSV file
+
+        Returns:
+            True if export successful, False otherwise
+        """
+        import csv
+
+        sheet = self._get_sheet_by_name(page_id)
+        if not sheet:
+            return False
+
+        rows = sheet.getElementsByType(TableRow)
+        if len(rows) < 4:
+            return False
+
+        with open(output_path, 'w', newline='', encoding='utf-8') as csvfile:
+            writer = csv.writer(csvfile, delimiter=';', quoting=csv.QUOTE_MINIMAL)
+
+            # Write header row (row 3, index 2)
+            if len(rows) > 2:
+                header_values = expand_row(rows[2])
+                # Take first 8 columns (A-H)
+                header = header_values[:8] if len(header_values) >= 8 else header_values
+                writer.writerow(header)
+
+            # Write all data rows (starting from row 4, index 3)
+            for i in range(3, len(rows)):
+                row_values = expand_row(rows[i])
+
+                # Skip completely empty rows
+                if not any(row_values[:8]):
+                    continue
+
+                # Take first 8 columns (A-H)
+                row_data = row_values[:8] if len(row_values) >= 8 else row_values
+                # Pad with empty strings if needed
+                while len(row_data) < 8:
+                    row_data.append('')
+
+                writer.writerow(row_data)
+
+        return True
