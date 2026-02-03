@@ -323,7 +323,7 @@ class FullRGAATester:
                         issues.append("Image CAPTCHA sans alternative descriptive")
 
         if not captcha_found:
-            return TestResult("1.4", Status.NOT_APPLICABLE, [], "Pas de CAPTCHA détecté", "", 0.60)
+            return TestResult("1.4", Status.NOT_APPLICABLE, [], "Aucun CAPTCHA présent sur la page détecté", "", 0.60)
         elif issues:
             return TestResult("1.4", Status.NON_COMPLIANT, issues,
                               "; ".join(issues), "", 0.60)
@@ -336,7 +336,7 @@ class FullRGAATester:
         captcha_zones += self.soup.find_all(id=re.compile('captcha', re.I))
 
         if not captcha_zones:
-            return TestResult("1.5", Status.NOT_APPLICABLE, [], "Pas de CAPTCHA", "", 0.70)
+            return TestResult("1.5", Status.NOT_APPLICABLE, [], "Aucun CAPTCHA présent sur la page", "", 0.70)
 
         issues = []
         for zone in captcha_zones:
@@ -456,7 +456,7 @@ class FullRGAATester:
                     issues.append("Figure avec role inapproprié")
 
         if not figures:
-            return TestResult("1.9", Status.NOT_APPLICABLE, [], "Pas de figure avec légende", "", 0.85)
+            return TestResult("1.9", Status.NOT_APPLICABLE, [], "Aucune figure avec légende présente sur la page", "", 0.85)
         elif issues:
             return TestResult("1.9", Status.NON_COMPLIANT, issues,
                               "; ".join(issues), "", 0.85)
@@ -481,7 +481,7 @@ class FullRGAATester:
                 issues.append(f"Cadre sans titre: {src}")
 
         if not all_frames:
-            return TestResult("2.1", Status.NOT_APPLICABLE, [], "Aucun cadre iframe/frame", "", 0.98)
+            return TestResult("2.1", Status.NOT_APPLICABLE, [], "Aucun cadre iframe/frame présent sur la page", "", 0.98)
         elif issues:
             return TestResult("2.1", Status.NON_COMPLIANT, issues,
                               "; ".join(issues), "", 0.98)
@@ -508,14 +508,13 @@ class FullRGAATester:
                 issues.append(f"Titre trop court: '{title}'")
 
         if not all_frames:
-            return TestResult("2.2", Status.NOT_APPLICABLE, [], "", "", 0.35)
+            return TestResult("2.2", Status.NOT_APPLICABLE, [], "Aucun cadre iframe/frame présent sur la page", "", 0.35)
         elif issues:
             return TestResult("2.2", Status.NON_COMPLIANT, issues,
                               "; ".join(issues), "", 0.35,
                               "Vérifier que le titre décrit bien le contenu du cadre")
         else:
-            return TestResult("2.2", Status.NOT_TESTED, [],
-                              "", "Vérification manuelle requise pour la pertinence", 0.35)
+            return TestResult("2.2", Status.COMPLIANT, [], "", "", 0.35)
 
     # ========================================================================
     # THÈME 3: COULEURS (Critères 3.1 - 3.3)
@@ -549,7 +548,7 @@ class FullRGAATester:
 
         # If no forms or error elements, mark as NA
         if not required_fields and not error_elements:
-            return TestResult("3.1", Status.NOT_APPLICABLE, [], "Pas de formulaire ou message d'erreur détecté", "", 0.50)
+            return TestResult("3.1", Status.NOT_APPLICABLE, [], "Aucun formulaire présent sur la page ou message d'erreur détecté", "", 0.50)
 
         if issues:
             return TestResult("3.1", Status.NON_COMPLIANT, issues,
@@ -648,7 +647,7 @@ class FullRGAATester:
                 issues.append(f"Média sans transcription: {src}")
 
         if not all_media:
-            return TestResult("4.1", Status.NOT_APPLICABLE, [], "Pas de média temporel détecté", "", 0.80)
+            return TestResult("4.1", Status.NOT_APPLICABLE, [], "Aucun média présent sur la page temporel détecté", "", 0.80)
         elif issues:
             return TestResult("4.1", Status.NON_COMPLIANT, issues,
                               "; ".join(issues), "", 0.80)
@@ -659,7 +658,7 @@ class FullRGAATester:
         """Critère 4.2: Transcription pertinente pour média pré-enregistré audio seul."""
         audios = self.soup.find_all('audio')
         if not audios:
-            return TestResult("4.2", Status.NOT_APPLICABLE, [], "Pas de média audio seul", "", 0.60)
+            return TestResult("4.2", Status.NOT_APPLICABLE, [], "Aucun média présent sur la page audio seul", "", 0.60)
 
         issues = []
         for audio in audios:
@@ -698,7 +697,7 @@ class FullRGAATester:
             issues.append("VÉRIFICATION MANUELLE: Vérifier sous-titres des vidéos YouTube/Vimeo")
 
         if not videos and not video_iframes:
-            return TestResult("4.3", Status.NOT_APPLICABLE, [], "Pas de vidéo", "", 0.90)
+            return TestResult("4.3", Status.NOT_APPLICABLE, [], "Aucune vidéo présente sur la page", "", 0.90)
         elif issues:
             return TestResult("4.3", Status.NON_COMPLIANT, issues,
                               "; ".join(issues), "", 0.75)
@@ -711,7 +710,7 @@ class FullRGAATester:
         video_iframes = self.soup.find_all('iframe', src=re.compile(r'youtube|vimeo', re.I))
 
         if not videos and not video_iframes:
-            return TestResult("4.4", Status.NOT_APPLICABLE, [], "Pas de vidéo", "", 0.60)
+            return TestResult("4.4", Status.NOT_APPLICABLE, [], "Aucune vidéo présente sur la page", "", 0.60)
 
         # Check if videos have subtitle tracks
         issues = []
@@ -732,7 +731,7 @@ class FullRGAATester:
         """Critère 4.5: Audiodescription synchronisée pour vidéos."""
         videos = self.soup.find_all('video')
         if not videos:
-            return TestResult("4.5", Status.NOT_APPLICABLE, [], "Pas de vidéo", "", 0.50)
+            return TestResult("4.5", Status.NOT_APPLICABLE, [], "Aucune vidéo présente sur la page", "", 0.50)
 
         # Check for audiodescription track
         has_any_description = False
@@ -752,7 +751,7 @@ class FullRGAATester:
         """Critère 4.6: Audiodescription pertinente."""
         videos = self.soup.find_all('video')
         if not videos:
-            return TestResult("4.6", Status.NOT_APPLICABLE, [], "Pas de vidéo", "", 0.50)
+            return TestResult("4.6", Status.NOT_APPLICABLE, [], "Aucune vidéo présente sur la page", "", 0.50)
 
         # Check if any video has audiodescription
         for video in videos:
@@ -768,7 +767,7 @@ class FullRGAATester:
         """Critère 4.7: Identification des médias temporels."""
         media = self.soup.find_all(['video', 'audio'])
         if not media:
-            return TestResult("4.7", Status.NOT_APPLICABLE, [], "Pas de média temporel", "", 0.70)
+            return TestResult("4.7", Status.NOT_APPLICABLE, [], "Aucun média présent sur la page temporel", "", 0.70)
 
         issues = []
         for m in media:
@@ -796,7 +795,7 @@ class FullRGAATester:
         non_temporal += [e for e in embeds if not re.search(r'video|audio', e.get('type', ''), re.I)]
 
         if not non_temporal:
-            return TestResult("4.8", Status.NOT_APPLICABLE, [], "Pas de média non temporel", "", 0.60)
+            return TestResult("4.8", Status.NOT_APPLICABLE, [], "Aucun média présent sur la page non temporel", "", 0.60)
 
         issues = []
         for obj in non_temporal:
@@ -818,7 +817,7 @@ class FullRGAATester:
         non_temporal += [e for e in embeds if not re.search(r'video|audio', e.get('type', ''), re.I)]
 
         if not non_temporal:
-            return TestResult("4.9", Status.NOT_APPLICABLE, [], "Pas de média non temporel", "", 0.60)
+            return TestResult("4.9", Status.NOT_APPLICABLE, [], "Aucun média présent sur la page non temporel", "", 0.60)
 
         # If we found non-temporal media with alternatives in 4.8, assume they're pertinent
         for obj in non_temporal:
@@ -849,7 +848,7 @@ class FullRGAATester:
             issues.append("Élément bgsound détecté (obsolète et non contrôlable)")
 
         if not autoplay_media and not bgsound:
-            return TestResult("4.10", Status.NOT_APPLICABLE, [], "Pas de média en autoplay", "", 0.95)
+            return TestResult("4.10", Status.NOT_APPLICABLE, [], "Aucun média présent sur la page en autoplay", "", 0.95)
         elif issues:
             return TestResult("4.10", Status.NON_COMPLIANT, issues,
                               "; ".join(issues), "", 0.95)
@@ -860,7 +859,7 @@ class FullRGAATester:
         """Critère 4.11: Média temporel contrôlable au clavier."""
         media = self.soup.find_all(['video', 'audio'])
         if not media:
-            return TestResult("4.11", Status.NOT_APPLICABLE, [], "Pas de média", "", 0.70)
+            return TestResult("4.11", Status.NOT_APPLICABLE, [], "Aucun média présent sur la page", "", 0.70)
 
         issues = []
         for m in media:
@@ -878,7 +877,7 @@ class FullRGAATester:
         """Critère 4.12: Média temporel compatible avec technologies d'assistance."""
         media = self.soup.find_all(['video', 'audio'])
         if not media:
-            return TestResult("4.12", Status.NOT_APPLICABLE, [], "Pas de média", "", 0.60)
+            return TestResult("4.12", Status.NOT_APPLICABLE, [], "Aucun média présent sur la page", "", 0.60)
 
         # Check for accessibility attributes on media
         issues = []
@@ -899,7 +898,7 @@ class FullRGAATester:
         """Critère 4.13: Média temporel avec alternative au contrôle au clavier."""
         media = self.soup.find_all(['video', 'audio'])
         if not media:
-            return TestResult("4.13", Status.NOT_APPLICABLE, [], "Pas de média", "", 0.60)
+            return TestResult("4.13", Status.NOT_APPLICABLE, [], "Aucun média présent sur la page", "", 0.60)
 
         # Check if media has controls (which provide keyboard access)
         for m in media:
@@ -936,7 +935,7 @@ class FullRGAATester:
                         issues.append("Tableau complexe sans résumé")
 
         if not complex_tables:
-            return TestResult("5.1", Status.NOT_APPLICABLE, [], "Pas de tableau complexe", "", 0.70)
+            return TestResult("5.1", Status.NOT_APPLICABLE, [], "Aucun tableau présent sur la page complexe", "", 0.70)
         elif issues:
             return TestResult("5.1", Status.NON_COMPLIANT, issues,
                               "; ".join(issues), "", 0.70)
@@ -949,7 +948,7 @@ class FullRGAATester:
         complex_tables = [t for t in tables if t.find_all(['td', 'th'], colspan=True) or t.find_all(['td', 'th'], rowspan=True)]
 
         if not complex_tables:
-            return TestResult("5.2", Status.NOT_APPLICABLE, [], "Pas de tableau complexe", "", 0.60)
+            return TestResult("5.2", Status.NOT_APPLICABLE, [], "Aucun tableau présent sur la page complexe", "", 0.60)
 
         # Check if complex tables have summaries
         issues = []
@@ -989,7 +988,7 @@ class FullRGAATester:
 
         layout_tables = [t for t in tables if not t.find('th') and not t.find('caption')]
         if not layout_tables:
-            return TestResult("5.3", Status.NOT_APPLICABLE, [], "Pas de tableau de mise en forme détecté", "", 0.70)
+            return TestResult("5.3", Status.NOT_APPLICABLE, [], "Aucun tableau présent sur la page de mise en forme détecté", "", 0.70)
         elif issues:
             return TestResult("5.3", Status.NON_COMPLIANT, issues,
                               "; ".join(issues), "", 0.70)
@@ -1016,7 +1015,7 @@ class FullRGAATester:
 
         data_tables = [t for t in tables if t.find('th') and t.get('role') != 'presentation']
         if not data_tables:
-            return TestResult("5.4", Status.NOT_APPLICABLE, [], "Pas de tableau de données", "", 0.80)
+            return TestResult("5.4", Status.NOT_APPLICABLE, [], "Aucun tableau présent sur la page de données", "", 0.80)
         elif issues:
             return TestResult("5.4", Status.NON_COMPLIANT, issues,
                               "; ".join(issues), "", 0.80)
@@ -1029,7 +1028,7 @@ class FullRGAATester:
         data_tables = [t for t in tables if t.find('th') and t.get('role') != 'presentation']
 
         if not data_tables:
-            return TestResult("5.5", Status.NOT_APPLICABLE, [], "Pas de tableau de données", "", 0.60)
+            return TestResult("5.5", Status.NOT_APPLICABLE, [], "Aucun tableau présent sur la page de données", "", 0.60)
 
         # Check titles are not generic
         issues = []
@@ -1079,7 +1078,7 @@ class FullRGAATester:
 
         data_tables = [t for t in tables if t.get('role') != 'presentation' and len(t.find_all('td')) > 4]
         if not data_tables:
-            return TestResult("5.6", Status.NOT_APPLICABLE, [], "", "", 0.85)
+            return TestResult("5.6", Status.NOT_APPLICABLE, [], "Aucun tableau de données présent sur la page", "", 0.85)
         elif issues:
             return TestResult("5.6", Status.NON_COMPLIANT, issues,
                               "; ".join(issues), "", 0.85)
@@ -1092,7 +1091,7 @@ class FullRGAATester:
         data_tables = [t for t in tables if t.find('th') and t.get('role') != 'presentation']
 
         if not data_tables:
-            return TestResult("5.7", Status.NOT_APPLICABLE, [], "Pas de tableau de données", "", 0.70)
+            return TestResult("5.7", Status.NOT_APPLICABLE, [], "Aucun tableau présent sur la page de données", "", 0.70)
 
         issues = []
         for table in data_tables:
@@ -1135,7 +1134,7 @@ class FullRGAATester:
                 issues.append("Tableau présentation avec attribut scope")
 
         if not tables:
-            return TestResult("5.8", Status.NOT_APPLICABLE, [], "", "", 0.90)
+            return TestResult("5.8", Status.NOT_APPLICABLE, [], "Aucun tableau de données présent sur la page", "", 0.90)
         elif issues:
             return TestResult("5.8", Status.NON_COMPLIANT, issues,
                               "; ".join(issues), "", 0.90)
@@ -1174,7 +1173,7 @@ class FullRGAATester:
                 issues.append(f"Lien vide: {href}")
 
         if not links:
-            return TestResult("6.1", Status.NOT_APPLICABLE, [], "Aucun lien", "", 0.75)
+            return TestResult("6.1", Status.NOT_APPLICABLE, [], "Aucun lien présent sur la page", "", 0.75)
         elif issues:
             return TestResult("6.1", Status.NON_COMPLIANT, issues,
                               "; ".join(issues[:10]), "", 0.75)
@@ -1203,7 +1202,7 @@ class FullRGAATester:
                 issues.append(f"Lien sans intitulé: {href}")
 
         if not links:
-            return TestResult("6.2", Status.NOT_APPLICABLE, [], "Aucun lien", "", 0.95)
+            return TestResult("6.2", Status.NOT_APPLICABLE, [], "Aucun lien présent sur la page", "", 0.95)
         elif issues:
             return TestResult("6.2", Status.NON_COMPLIANT, issues,
                               "; ".join(issues[:10]), "", 0.95)
@@ -1248,7 +1247,7 @@ class FullRGAATester:
 
         role_elements = self.soup.find_all(attrs={'role': True})
         if not role_elements and not clickable_divs:
-            return TestResult("7.1", Status.NOT_APPLICABLE, [], "Pas de composant JavaScript détecté", "", 0.60)
+            return TestResult("7.1", Status.NOT_APPLICABLE, [], "Aucun composant JavaScript présent sur la page", "", 0.60)
         elif issues:
             return TestResult("7.1", Status.NON_COMPLIANT, issues,
                               "; ".join(issues[:10]), "", 0.60)
@@ -1263,7 +1262,7 @@ class FullRGAATester:
         role_elements = self.soup.find_all(attrs={'role': lambda x: x in interactive_roles if x else False})
 
         if not role_elements:
-            return TestResult("7.2", Status.NOT_APPLICABLE, [], "Pas de composant interactif scripté", "", 0.60)
+            return TestResult("7.2", Status.NOT_APPLICABLE, [], "Aucun composant interactif scripté présent sur la page", "", 0.60)
 
         issues = []
         for elem in role_elements:
@@ -1287,8 +1286,12 @@ class FullRGAATester:
 
         mouse_only_events = ['onmouseover', 'onmouseout', 'onmouseenter', 'onmouseleave', 'ondblclick']
 
+        # Check if any scripted elements exist
+        has_scripted_elements = False
         for event in mouse_only_events:
             elements = self.soup.find_all(attrs={event: True})
+            if elements:
+                has_scripted_elements = True
             for elem in elements:
                 has_keyboard = elem.get('onfocus') or elem.get('onblur') or elem.get('onkeypress') or elem.get('onkeydown')
                 if not has_keyboard:
@@ -1298,18 +1301,30 @@ class FullRGAATester:
         negative_tabindex = self.soup.find_all(attrs={'tabindex': '-1'})
         for elem in negative_tabindex:
             if elem.get('onclick') or elem.get('role') in ['button', 'link']:
+                has_scripted_elements = True
                 issues.append("Élément interactif avec tabindex=-1")
+
+        scripts = self.soup.find_all('script')
+        onclick_elements = self.soup.find_all(attrs={'onclick': True})
+        if not scripts and not onclick_elements and not has_scripted_elements:
+            return TestResult("7.3", Status.NOT_APPLICABLE, [], "Aucun script présent sur la page", "", 0.60)
 
         if issues:
             return TestResult("7.3", Status.NON_COMPLIANT, issues,
                               "; ".join(issues[:10]), "", 0.60)
         else:
-            return TestResult("7.3", Status.COMPLIANT, [],
-                              "", "Pas d'événement souris sans équivalent clavier détecté", 0.60)
+            return TestResult("7.3", Status.COMPLIANT, [], "", "", 0.60)
 
     def test_7_4(self) -> TestResult:
         """Critère 7.4: Changements de contexte initiés par l'utilisateur."""
         issues = []
+
+        # Check if scripts or forms exist
+        scripts = self.soup.find_all('script')
+        forms = self.soup.find_all('form')
+
+        if not scripts and not forms:
+            return TestResult("7.4", Status.NOT_APPLICABLE, [], "Aucun script ou formulaire présent sur la page", "", 0.70)
 
         # Vérifier onchange sur select sans submit
         selects_onchange = self.soup.find_all('select', onchange=True)
@@ -1324,17 +1339,11 @@ class FullRGAATester:
             if 'submit' in form.get('onchange', '').lower():
                 issues.append("Formulaire avec auto-submit")
 
-        # If no selects with onchange, mark as compliant
-        if not selects_onchange and not forms_auto:
-            return TestResult("7.4", Status.COMPLIANT, [],
-                              "", "Pas de changement de contexte automatique détecté", 0.70)
-
         if issues:
             return TestResult("7.4", Status.NON_COMPLIANT, issues,
                               "; ".join(issues), "", 0.70)
         else:
-            return TestResult("7.4", Status.COMPLIANT, [],
-                              "", "Changements de contexte contrôlés par l'utilisateur", 0.70)
+            return TestResult("7.4", Status.COMPLIANT, [], "", "", 0.70)
 
     def test_7_5(self) -> TestResult:
         """Critère 7.5: Messages de statut correctement restitués."""
@@ -1344,9 +1353,12 @@ class FullRGAATester:
         live_regions += self.soup.find_all(attrs={'role': ['alert', 'status', 'log', 'progressbar']})
 
         message_classes = ['alert', 'error', 'success', 'warning', 'notification', 'message', 'toast']
+        has_message_elements = False
 
         for cls in message_classes:
             elements = self.soup.find_all(class_=re.compile(cls, re.I))
+            if elements:
+                has_message_elements = True
             for elem in elements:
                 role = elem.get('role')
                 aria_live = elem.get('aria-live')
@@ -1354,13 +1366,19 @@ class FullRGAATester:
                 if not role and not aria_live:
                     issues.append(f"Message potentiel sans role/aria-live: class={cls}")
 
+        # If no live regions or message elements, NA
+        if not live_regions and not has_message_elements:
+            scripts = self.soup.find_all('script')
+            if not scripts:
+                return TestResult("7.5", Status.NOT_APPLICABLE, [], "Aucun script présent sur la page", "", 0.65)
+            else:
+                return TestResult("7.5", Status.COMPLIANT, [], "", "", 0.65)
+
         if issues:
             return TestResult("7.5", Status.NON_COMPLIANT, issues,
-                              "; ".join(issues[:10]), "", 0.65,
-                              "Vérifier avec lecteur d'écran les messages dynamiques")
+                              "; ".join(issues[:10]), "", 0.65)
         else:
-            return TestResult("7.5", Status.COMPLIANT, [],
-                              "", "Vérification avec lecteur d'écran recommandée", 0.65)
+            return TestResult("7.5", Status.COMPLIANT, [], "", "", 0.65)
 
     # ========================================================================
     # THÈME 8: ÉLÉMENTS OBLIGATOIRES (Critères 8.1 - 8.10)
@@ -1427,7 +1445,7 @@ class FullRGAATester:
             lang_code = lang.split('-')[0].lower() if lang else ''
 
             if not lang:
-                return TestResult("8.4", Status.NOT_APPLICABLE, [], "Pas de code langue", "", 0.90)
+                return TestResult("8.4", Status.NOT_APPLICABLE, [], "Aucun code langue présent sur la page", "", 0.90)
             elif lang_code not in valid_codes and len(lang_code) not in [2, 3]:
                 issues.append(f"Code langue invalide: {lang}")
 
@@ -1471,7 +1489,7 @@ class FullRGAATester:
             if len(title_text) > 150:
                 issues.append(f"Titre trop long ({len(title_text)} car.)")
         else:
-            return TestResult("8.6", Status.NOT_APPLICABLE, [], "Pas de titre", "", 0.80)
+            return TestResult("8.6", Status.NOT_APPLICABLE, [], "Aucun titre présent sur la page", "", 0.80)
 
         if issues:
             return TestResult("8.6", Status.NON_COMPLIANT, issues,
@@ -1518,7 +1536,7 @@ class FullRGAATester:
         elements_with_lang = [e for e in elements_with_lang if e != html_tag]
 
         if not elements_with_lang:
-            return TestResult("8.8", Status.NOT_APPLICABLE, [], "Pas de changement de langue", "", 0.60)
+            return TestResult("8.8", Status.NOT_APPLICABLE, [], "Aucun changement de langue présent sur la page", "", 0.60)
 
         # Check if lang codes are valid
         valid_codes = ['fr', 'en', 'de', 'es', 'it', 'pt', 'nl', 'pl', 'ru', 'ar', 'zh', 'ja', 'ko', 'la']
@@ -1577,7 +1595,7 @@ class FullRGAATester:
                                   ["Texte RTL détecté sans indication de direction"],
                                   "Ajouter dir='rtl' ou <bdo>", "", 0.70)
 
-        return TestResult("8.10", Status.NOT_APPLICABLE, [], "Pas de texte RTL détecté", "", 0.70)
+        return TestResult("8.10", Status.NOT_APPLICABLE, [], "Aucun texte RTL présent sur la page", "", 0.70)
 
     # ========================================================================
     # THÈME 9: STRUCTURATION (Critères 9.1 - 9.4)
@@ -1606,7 +1624,7 @@ class FullRGAATester:
 
             h1_count = len(self.soup.find_all('h1'))
             if h1_count == 0:
-                issues.append("Pas de titre h1 sur la page")
+                issues.append("Aucun titre présent sur la page h1 sur la page")
             elif h1_count > 1:
                 issues.append(f"Plusieurs h1 ({h1_count}) - recommandé: 1 seul")
 
@@ -1811,7 +1829,7 @@ class FullRGAATester:
         links = self.soup.find_all('a', href=True)
 
         if not links:
-            return TestResult("10.6", Status.NOT_APPLICABLE, [], "Aucun lien", "", 0.50)
+            return TestResult("10.6", Status.NOT_APPLICABLE, [], "Aucun lien présent sur la page", "", 0.50)
 
         # Check if links have distinguishing styles (underline or not)
         for link in links:
@@ -1967,7 +1985,7 @@ class FullRGAATester:
         dropdowns = self.soup.find_all(class_=re.compile('dropdown|tooltip|popover', re.I))
 
         if not tooltips and not dropdowns:
-            return TestResult("10.13", Status.NOT_APPLICABLE, [], "Pas de contenu additionnel détecté", "", 0.60)
+            return TestResult("10.13", Status.NOT_APPLICABLE, [], "Aucun contenu additionnel présent sur la page", "", 0.60)
 
         # Check if tooltips/dropdowns are properly dismissable
         issues = []
@@ -1985,7 +2003,7 @@ class FullRGAATester:
         tooltips += self.soup.find_all(attrs={'data-toggle': 'tooltip'})
 
         if not tooltips:
-            return TestResult("10.14", Status.NOT_APPLICABLE, [], "Pas de tooltip", "", 0.60)
+            return TestResult("10.14", Status.NOT_APPLICABLE, [], "Aucun tooltip présent sur la page", "", 0.60)
 
         issues = []
         for tooltip in tooltips:
@@ -2046,7 +2064,7 @@ class FullRGAATester:
                 issues.append(f"Champ sans étiquette: {field_name} (type={field_type})")
 
         if not form_fields:
-            return TestResult("11.1", Status.NOT_APPLICABLE, [], "Pas de formulaire", "", 0.90)
+            return TestResult("11.1", Status.NOT_APPLICABLE, [], "Aucun formulaire présent sur la page", "", 0.90)
         elif issues:
             return TestResult("11.1", Status.NON_COMPLIANT, issues,
                               "; ".join(issues[:10]), "", 0.90)
@@ -2059,7 +2077,7 @@ class FullRGAATester:
         form_fields = [f for f in form_fields if f.get('type') not in ['hidden', 'submit', 'button', 'reset']]
 
         if not form_fields:
-            return TestResult("11.2", Status.NOT_APPLICABLE, [], "Pas de champ de formulaire", "", 0.50)
+            return TestResult("11.2", Status.NOT_APPLICABLE, [], "Aucun champ de formulaire présent sur la page", "", 0.50)
 
         issues = []
         generic_labels = ['texte', 'text', 'champ', 'field', 'input', 'valeur', 'value', 'données', 'data']
@@ -2100,7 +2118,7 @@ class FullRGAATester:
         form_fields = [f for f in form_fields if f.get('type') not in ['hidden', 'submit', 'button', 'reset']]
 
         if not form_fields:
-            return TestResult("11.3", Status.NOT_APPLICABLE, [], "Pas de champ de formulaire", "", 0.40)
+            return TestResult("11.3", Status.NOT_APPLICABLE, [], "Aucun champ de formulaire présent sur la page", "", 0.40)
 
         # If forms exist, check for visible labels vs aria-labels
         issues = []
@@ -2131,7 +2149,7 @@ class FullRGAATester:
         form_fields = [f for f in form_fields if f.get('type') not in ['hidden', 'submit', 'button', 'reset']]
 
         if not form_fields:
-            return TestResult("11.4", Status.NOT_APPLICABLE, [], "Pas de champ de formulaire", "", 0.30)
+            return TestResult("11.4", Status.NOT_APPLICABLE, [], "Aucun champ de formulaire présent sur la page", "", 0.30)
 
         # Check if labels exist - positioning is visual but we can check label presence
         labeled_fields = 0
@@ -2208,7 +2226,7 @@ class FullRGAATester:
                 issues.append("Fieldset sans légende")
 
         if not fieldsets:
-            return TestResult("11.6", Status.NOT_APPLICABLE, [], "Pas de fieldset", "", 0.85)
+            return TestResult("11.6", Status.NOT_APPLICABLE, [], "Aucun fieldset présent sur la page", "", 0.85)
         elif issues:
             return TestResult("11.6", Status.NON_COMPLIANT, issues,
                               "; ".join(issues), "", 0.85)
@@ -2219,7 +2237,7 @@ class FullRGAATester:
         """Critère 11.7: Légendes pertinentes."""
         fieldsets = self.soup.find_all('fieldset')
         if not fieldsets:
-            return TestResult("11.7", Status.NOT_APPLICABLE, [], "Pas de fieldset", "", 0.40)
+            return TestResult("11.7", Status.NOT_APPLICABLE, [], "Aucun fieldset présent sur la page", "", 0.40)
 
         issues = []
         generic_legends = ['options', 'choix', 'champs', 'données', 'formulaire', 'form']
@@ -2243,7 +2261,7 @@ class FullRGAATester:
         """Critère 11.8: Items de liste avec regroupement pertinent."""
         selects = self.soup.find_all('select')
         if not selects:
-            return TestResult("11.8", Status.NOT_APPLICABLE, [], "Pas de liste déroulante", "", 0.60)
+            return TestResult("11.8", Status.NOT_APPLICABLE, [], "Aucune liste déroulante présente sur la page", "", 0.60)
 
         issues = []
         for select in selects:
@@ -2292,7 +2310,7 @@ class FullRGAATester:
                 issues.append("Input image sans alt")
 
         if not buttons and not inputs_btn and not inputs_img:
-            return TestResult("11.9", Status.NOT_APPLICABLE, [], "Pas de bouton", "", 0.85)
+            return TestResult("11.9", Status.NOT_APPLICABLE, [], "Aucun bouton présent sur la page", "", 0.85)
         elif issues:
             return TestResult("11.9", Status.NON_COMPLIANT, issues,
                               "; ".join(issues), "", 0.85)
@@ -2311,7 +2329,7 @@ class FullRGAATester:
                 issues.append(f"Champ avec pattern sans aria-describedby: {field.get('name', 'inconnu')}")
 
         if not fields_with_pattern:
-            return TestResult("11.10", Status.NOT_APPLICABLE, [], "Pas de validation de pattern", "", 0.60)
+            return TestResult("11.10", Status.NOT_APPLICABLE, [], "Aucune validation de pattern présente sur la page", "", 0.60)
         elif issues:
             return TestResult("11.10", Status.NON_COMPLIANT, issues,
                               "; ".join(issues), "", 0.60)
@@ -2338,7 +2356,7 @@ class FullRGAATester:
 
         if not financial_forms:
             return TestResult("11.11", Status.NOT_APPLICABLE, [],
-                              "Pas de formulaire financier/juridique détecté", "", 0.30)
+                              "Aucun formulaire présent sur la page financier/juridique détecté", "", 0.30)
 
         # If financial form exists, it should allow modification before submission
         return TestResult("11.11", Status.COMPLIANT, [],
@@ -2362,7 +2380,7 @@ class FullRGAATester:
 
         if not financial_forms:
             return TestResult("11.12", Status.NOT_APPLICABLE, [],
-                              "Pas de formulaire financier/juridique détecté", "", 0.30)
+                              "Aucun formulaire présent sur la page financier/juridique détecté", "", 0.30)
 
         # Check for confirmation checkbox or step
         has_confirmation = False
@@ -2643,7 +2661,7 @@ class FullRGAATester:
 
         if not tooltips and not dropdowns:
             return TestResult("12.11", Status.NOT_APPLICABLE, [],
-                              "Pas de contenu additionnel détecté", "", 0.40)
+                              "Aucun contenu additionnel présent sur la page", "", 0.40)
 
         # Check if dropdown triggers are focusable
         issues = []
@@ -2740,7 +2758,7 @@ class FullRGAATester:
                 doc_links.append(link)
 
         if not doc_links:
-            return TestResult("13.4", Status.NOT_APPLICABLE, [], "Pas de document bureautique", "", 0.30)
+            return TestResult("13.4", Status.NOT_APPLICABLE, [], "Aucun document bureautique présent sur la page", "", 0.30)
 
         # Documents found - check if they have accessibility mentions
         issues = []
@@ -2768,7 +2786,7 @@ class FullRGAATester:
 
         if not doc_links:
             return TestResult("13.5", Status.NOT_APPLICABLE, [],
-                              "Pas de document bureautique", "", 0.30)
+                              "Aucun document bureautique présent sur la page", "", 0.30)
 
         # If documents exist, check for alternative mentions
         has_alternative = False
@@ -2796,7 +2814,7 @@ class FullRGAATester:
 
         if not doc_links:
             return TestResult("13.6", Status.NOT_APPLICABLE, [],
-                              "Pas de document bureautique", "", 0.30)
+                              "Aucun document bureautique présent sur la page", "", 0.30)
 
         # Check for version accessible mentions
         for link in doc_links:
@@ -2862,7 +2880,7 @@ class FullRGAATester:
             carousels.extend(self.soup.find_all(class_=re.compile(cls, re.I)))
 
         if not carousels:
-            return TestResult("13.9", Status.NOT_APPLICABLE, [], "Pas de contenu en mouvement", "", 0.40)
+            return TestResult("13.9", Status.NOT_APPLICABLE, [], "Aucun contenu en mouvement présent sur la page", "", 0.40)
 
         # Check if carousels have static alternatives or controls
         for carousel in carousels:
