@@ -273,6 +273,13 @@ class ODSAuditFrame(ttk.Frame):
                 stats = page.get_statistics()
                 self.log(f"✅ Page {page_id} analysée: {stats['compliant']}/{stats['total'] - stats['not_applicable']} conformes")
 
+                # Auto-save results
+                try:
+                    self.audit_handler.save()
+                    self.log("💾 Résultats sauvegardés automatiquement")
+                except Exception as save_error:
+                    self.log(f"⚠️ Avertissement: Sauvegarde échouée - {str(save_error)}")
+
                 # Update UI
                 self.after(0, self.populate_pages_list)
             else:
@@ -316,6 +323,13 @@ class ODSAuditFrame(ttk.Frame):
 
             self.log("✅ Analyse terminée!")
             self.log(f"Résultats: {stats['compliant']} conformes, {stats['non_compliant']} non conformes, {stats['not_applicable']} N/A")
+
+            # Auto-save results
+            try:
+                self.audit_handler.save()
+                self.log("💾 Résultats sauvegardés automatiquement")
+            except Exception as save_error:
+                self.log(f"⚠️ Avertissement: Sauvegarde échouée - {str(save_error)}")
 
             # Update UI
             self.after(0, self.populate_pages_list)
@@ -384,10 +398,16 @@ class ODSAuditFrame(ttk.Frame):
     def log(self, message: str):
         """
         Add a message to the log output.
+        Thread-safe: can be called from any thread.
 
         Args:
             message: Message to log
         """
+        # Schedule GUI update on main thread
+        self.after(0, self._log_internal, message)
+
+    def _log_internal(self, message: str):
+        """Internal log method that runs on main thread."""
         self.log_text.config(state="normal")
         self.log_text.insert("end", f"{message}\n")
         self.log_text.see("end")
