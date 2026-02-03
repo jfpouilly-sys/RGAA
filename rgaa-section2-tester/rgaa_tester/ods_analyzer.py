@@ -54,18 +54,20 @@ class ODSAuditAnalyzer:
 
         # Check if URL is valid
         if url in ["Absente", ""] or not url.startswith("http"):
-            # Mark all criteria as NA for absent pages
+            # Log that page is absent
+            if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
+                self.crawler._callback_log(f"⊘ Page {page_id} absente ou URL invalide - marquée NA")
+
+            # Mark all criteria as NA in memory (fast)
             for criterion in page_data.criteria:
                 criterion.status = Status.NOT_APPLICABLE
-                self.handler.update_criterion(
-                    page_id=page_id,
-                    criterion_id=criterion.criterion_id,
-                    status=Status.NOT_APPLICABLE
-                )
-            # Save CSV for this page
+                criterion.modifications = "Page absente ou URL invalide"
+
+            # Save CSV for this page (contains NA status from memory)
             csv_path = self.save_page_csv(page_id)
             if csv_path and hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
                 self.crawler._callback_log(f"💾 CSV sauvegardé: {csv_path}")
+
             return page_data
 
         if not run_automated_tests:
