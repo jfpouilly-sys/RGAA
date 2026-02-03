@@ -19,6 +19,13 @@ from .crawler import Crawler, PageCrawlee
 from .report_generator import GenerateurRapport
 from .utils import est_url_valide, formater_date, normaliser_url
 
+# Try to import ODS modules (optional feature)
+try:
+    from .ods_gui import ODSAuditFrame
+    ODS_AVAILABLE = True
+except ImportError:
+    ODS_AVAILABLE = False
+
 
 class ApplicationRGAA(tk.Tk):
     """
@@ -75,14 +82,171 @@ class ApplicationRGAA(tk.Tk):
         self.conteneur = ttk.Frame(self, padding="10")
         self.conteneur.pack(fill=tk.BOTH, expand=True)
 
-        # Sections de l'interface
+        # En-tête global
         self._creer_section_entete()
-        self._creer_section_configuration()
-        self._creer_section_actions()
-        self._creer_section_progression()
-        self._creer_section_logs()
-        self._creer_section_resultats()
+
+        # Create notebook for tabs
+        self.notebook = ttk.Notebook(self.conteneur)
+        self.notebook.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
+
+        # Tab 1: Page Analysis (existing functionality)
+        self.tab_analyse = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_analyse, text="📄 Analyse de Pages")
+
+        # Create analysis tab content
+        self._creer_onglet_analyse()
+
+        # Tab 2: ODS Audit (if available)
+        if ODS_AVAILABLE:
+            try:
+                self.tab_ods = ODSAuditFrame(self.notebook)
+                self.notebook.add(self.tab_ods, text="📊 Audit ODS")
+            except Exception as e:
+                print(f"Warning: Could not create ODS tab: {e}")
+
+        # Status bar
         self._creer_barre_statut()
+
+    def _creer_onglet_analyse(self) -> None:
+        """Crée le contenu de l'onglet d'analyse de pages."""
+        # Use tab_analyse as container instead of conteneur
+        container = self.tab_analyse
+
+        # Sections de l'interface
+        self._creer_section_configuration_in_container(container)
+        self._creer_section_actions_in_container(container)
+        self._creer_section_progression_in_container(container)
+        self._creer_section_logs_in_container(container)
+        self._creer_section_resultats_in_container(container)
+
+    def _creer_section_configuration_in_container(self, container) -> None:
+        """Crée la section de configuration dans un conteneur spécifique."""
+        frame = ttk.LabelFrame(container, text="Configuration", padding="10")
+        frame.pack(fill=tk.X, pady=(0, 10))
+
+        # URL
+        frame_url = ttk.Frame(frame)
+        frame_url.pack(fill=tk.X, pady=(0, 5))
+
+        ttk.Label(frame_url, text="URL à analyser :").pack(side=tk.LEFT)
+        self.entree_url = ttk.Entry(frame_url, width=60)
+        self.entree_url.pack(side=tk.LEFT, padx=(10, 0), fill=tk.X, expand=True)
+        self.entree_url.insert(0, "https://")
+        self.entree_url.bind('<Return>', lambda e: self._lancer_analyse())
+
+        # Options
+        frame_options = ttk.Frame(frame)
+        frame_options.pack(fill=tk.X, pady=(5, 0))
+
+        # Mode d'analyse
+        ttk.Label(frame_options, text="Mode :").pack(side=tk.LEFT)
+
+        self.var_mode = tk.StringVar(value="unique")
+        ttk.Radiobutton(
+            frame_options, text="Page unique",
+            variable=self.var_mode, value="unique"
+        ).pack(side=tk.LEFT, padx=(10, 5))
+
+        ttk.Radiobutton(
+            frame_options, text="Crawler multi-pages",
+            variable=self.var_mode, value="crawler"
+        ).pack(side=tk.LEFT, padx=(5, 20))
+
+        # Nombre max de pages
+        ttk.Label(frame_options, text="Max pages :").pack(side=tk.LEFT)
+        self.spin_max_pages = ttk.Spinbox(
+            frame_options, from_=1, to=300, width=5,
+            state="readonly"
+        )
+        self.spin_max_pages.set(10)
+        self.spin_max_pages.pack(side=tk.LEFT, padx=(5, 0))
+
+    def _creer_section_actions_in_container(self, container) -> None:
+        """Crée la section des boutons d'action dans un conteneur spécifique."""
+        frame = ttk.Frame(container)
+        frame.pack(fill=tk.X, pady=(0, 10))
+
+        self.btn_analyser = ttk.Button(
+            frame, text="Lancer l'analyse",
+            command=self._lancer_analyse,
+            style='Accent.TButton'
+        )
+        self.btn_analyser.pack(side=tk.LEFT)
+
+        self.btn_arreter = ttk.Button(
+            frame, text="Arrêter",
+            command=self._arreter_analyse,
+            state=tk.DISABLED
+        )
+        self.btn_arreter.pack(side=tk.LEFT, padx=(10, 0))
+
+        self.btn_rapport = ttk.Button(
+            frame, text="Générer le rapport",
+            command=self._generer_rapport,
+            state=tk.DISABLED
+        )
+        self.btn_rapport.pack(side=tk.LEFT, padx=(10, 0))
+
+        self.btn_ouvrir_rapport = ttk.Button(
+            frame, text="Ouvrir le dernier rapport",
+            command=self._ouvrir_dernier_rapport,
+            state=tk.DISABLED
+        )
+        self.btn_ouvrir_rapport.pack(side=tk.LEFT, padx=(10, 0))
+
+        # Bouton effacer à droite
+        self.btn_effacer = ttk.Button(
+            frame, text="Effacer",
+            command=self._effacer_tout
+        )
+        self.btn_effacer.pack(side=tk.RIGHT)
+
+    def _creer_section_progression_in_container(self, container) -> None:
+        """Crée la section de progression dans un conteneur spécifique."""
+        frame = ttk.Frame(container)
+        frame.pack(fill=tk.X, pady=(0, 10))
+
+        self.label_progression = ttk.Label(frame, text="En attente...")
+        self.label_progression.pack(fill=tk.X)
+
+        self.barre_progression = ttk.Progressbar(
+            frame, mode='determinate', length=400
+        )
+        self.barre_progression.pack(fill=tk.X, pady=(5, 0))
+
+    def _creer_section_logs_in_container(self, container) -> None:
+        """Crée la section des logs dans un conteneur spécifique."""
+        frame = ttk.LabelFrame(container, text="Journal d'activité", padding="5")
+        frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+
+        self.zone_logs = scrolledtext.ScrolledText(
+            frame, height=10, wrap=tk.WORD,
+            font=('Consolas', 9)
+        )
+        self.zone_logs.pack(fill=tk.BOTH, expand=True)
+        self.zone_logs.config(state=tk.DISABLED)
+
+    def _creer_section_resultats_in_container(self, container) -> None:
+        """Crée la section des résultats dans un conteneur spécifique."""
+        frame = ttk.LabelFrame(container, text="Résultats", padding="5")
+        frame.pack(fill=tk.X, pady=(0, 10))
+
+        # Grille de résultats
+        self.frame_resultats = ttk.Frame(frame)
+        self.frame_resultats.pack(fill=tk.X)
+
+        # Labels pour les statistiques
+        self._creer_label_stat("Pages analysées :", "0", 0, 0)
+        self._creer_label_stat("Cadres détectés :", "0", 0, 1)
+        self._creer_label_stat("Cadres testés :", "0", 0, 2)
+
+        self._creer_label_stat("Critère 2.1 - Conformes :", "0", 1, 0)
+        self._creer_label_stat("Critère 2.1 - Non conformes :", "0", 1, 1)
+        self._creer_label_stat("Taux de conformité :", "- %", 1, 2)
+
+        self._creer_label_stat("Critère 2.2 - À vérifier :", "0", 2, 0)
+        self._creer_label_stat("Alertes détectées :", "0", 2, 1)
+        self._creer_label_stat("Statut global :", "-", 2, 2)
 
     def _creer_section_entete(self) -> None:
         """Crée l'en-tête de l'application."""
