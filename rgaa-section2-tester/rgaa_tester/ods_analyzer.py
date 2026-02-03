@@ -6,6 +6,8 @@ Connects the ODS file format with our automated accessibility tests.
 Supports full RGAA 4.1.2 testing with all 106 criteria.
 """
 
+import csv
+import os
 from typing import Dict, List, Optional
 from .ods_handler import RGAAAuditODSHandler
 from .ods_models import Status, Derogation, PageAudit, AuditCriterion
@@ -60,6 +62,10 @@ class ODSAuditAnalyzer:
                     criterion_id=criterion.criterion_id,
                     status=Status.NOT_APPLICABLE
                 )
+            # Save CSV for this page
+            csv_path = self.save_page_csv(page_id)
+            if csv_path and hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
+                self.crawler._callback_log(f"💾 CSV sauvegardé: {csv_path}")
             return page_data
 
         if not run_automated_tests:
@@ -87,7 +93,14 @@ class ODSAuditAnalyzer:
             )
 
         # Reload updated page data
-        return self.handler.get_page_audit(page_id)
+        updated_page = self.handler.get_page_audit(page_id)
+
+        # Save CSV file for this page
+        csv_path = self.save_page_csv(page_id)
+        if csv_path and hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
+            self.crawler._callback_log(f"💾 CSV sauvegardé: {csv_path}")
+
+        return updated_page
 
     def run_automated_tests(self, url: str) -> Dict:
         """
@@ -388,3 +401,53 @@ class ODSAuditAnalyzer:
             summary += "\n---\n\n*Rapport généré automatiquement par RGAA Section 2 Tester*\n"
 
         return summary
+
+    def save_page_csv(self, page_id: str, output_dir: str = ".") -> str:
+        """
+        Save page test results to a CSV file.
+
+        Args:
+            page_id: Page identifier (P01, P02, etc.)
+            output_dir: Directory to save the CSV file (default: current directory)
+
+        Returns:
+            Path to the saved CSV file
+        """
+        page_data = self.handler.get_page_audit(page_id)
+        if not page_data:
+            return ""
+
+        # Create CSV filename
+        csv_filename = f"{page_id}.csv"
+        csv_path = os.path.join(output_dir, csv_filename)
+
+        # Write CSV file (overwrite if exists)
+        with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
+            writer = csv.writer(csvfile, delimiter=';', quoting=csv.QUOTE_MINIMAL)
+
+            # Write header
+            writer.writerow([
+                'Thématique',
+                'Critère',
+                'Description',
+                'Statut',
+                'Dérogation',
+                'Modifications',
+                'Commentaires',
+                'Date de modification'
+            ])
+
+            # Write criteria rows
+            for criterion in page_data.criteria:
+                writer.writerow([
+                    criterion.theme,
+                    criterion.criterion_id,
+                    criterion.description,
+                    criterion.status.value,
+                    criterion.derogation.value,
+                    criterion.modifications,
+                    criterion.comments,
+                    criterion.modification_date
+                ])
+
+        return csv_path
