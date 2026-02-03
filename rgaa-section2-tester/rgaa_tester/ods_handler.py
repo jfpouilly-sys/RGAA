@@ -79,6 +79,113 @@ def expand_row(row: TableRow) -> List[str]:
     return values
 
 
+def ensure_cells_exist(row: TableRow, min_columns: int = 8):
+    """
+    Ensure a row has at least min_columns individual cells.
+
+    ODS files may use numbercolumnsrepeated for empty cells, which causes
+    issues when trying to update specific columns. This function expands
+    repeated cells into individual cells.
+
+    Args:
+        row: TableRow object
+        min_columns: Minimum number of columns to ensure
+    """
+    cells = row.getElementsByType(TableCell)
+    current_col = 0
+
+    for cell in list(cells):  # Use list() to allow modification during iteration
+        repeat = cell.getAttribute("numbercolumnsrepeated")
+        repeat = int(repeat) if repeat else 1
+
+        if repeat > 1 and current_col + repeat > min_columns:
+            # This repeated cell spans columns we need to write to
+            # We need to split it into individual cells
+
+            # Remove the repeat attribute
+            cell.removeAttribute("numbercolumnsrepeated")
+
+            # Add individual cells for the remaining repetitions
+            value = get_cell_value(cell)
+            parent = cell.parentNode
+            next_sibling = cell.nextSibling
+
+            for _ in range(repeat - 1):
+                new_cell = TableCell()
+                if value:
+                    new_cell.addElement(P(text=value))
+                if next_sibling:
+                    parent.insertBefore(new_cell, next_sibling)
+                else:
+                    parent.addElement(new_cell)
+
+            current_col += repeat
+        else:
+            current_col += repeat
+
+    # Add more cells if still not enough
+    cells = row.getElementsByType(TableCell)
+    actual_col_count = sum(
+        int(c.getAttribute("numbercolumnsrepeated") or 1)
+        for c in cells
+    )
+
+    while actual_col_count < min_columns:
+        new_cell = TableCell()
+        row.addElement(new_cell)
+        actual_col_count += 1
+
+
+def get_cell_at_column(row: TableRow, column_index: int) -> Optional[TableCell]:
+    """
+    Get the cell at a specific column index, considering repeated cells.
+
+    Args:
+        row: TableRow object
+        column_index: 0-based column index
+
+    Returns:
+        TableCell at the given column, or None if not found
+    """
+    current_col = 0
+    for cell in row.getElementsByType(TableCell):
+        repeat = cell.getAttribute("numbercolumnsrepeated")
+        repeat = int(repeat) if repeat else 1
+
+        if current_col <= column_index < current_col + repeat:
+            # If this is a repeated cell and we're not at the first position,
+            # we need to split it
+            if repeat > 1 and column_index > current_col:
+                # Split the repeated cell
+                cell.removeAttribute("numbercolumnsrepeated")
+                value = get_cell_value(cell)
+                parent = cell.parentNode
+
+                # Insert cells before (for positions before column_index)
+                for i in range(column_index - current_col):
+                    new_cell = TableCell()
+                    if value:
+                        new_cell.addElement(P(text=value))
+                    parent.insertBefore(new_cell, cell)
+
+                # Insert cells after (for positions after column_index)
+                next_sibling = cell.nextSibling
+                for i in range(current_col + repeat - column_index - 1):
+                    new_cell = TableCell()
+                    if value:
+                        new_cell.addElement(P(text=value))
+                    if next_sibling:
+                        parent.insertBefore(new_cell, next_sibling)
+                    else:
+                        parent.addElement(new_cell)
+
+            return cell
+
+        current_col += repeat
+
+    return None
+
+
 class RGAAAuditODSHandler:
     """Handler for reading and writing RGAA audit .ods files."""
 
@@ -318,33 +425,44 @@ class RGAAAuditODSHandler:
 
         # Find the row for this criterion (starting from row 4, index 3)
         for i in range(3, len(rows)):
-            cells = rows[i].getElementsByType(TableCell)
-            if len(cells) < 2:
+            row = rows[i]
+
+            # Get criterion ID from column B (index 1)
+            criterion_cell = get_cell_at_column(row, 1)
+            if not criterion_cell:
                 continue
 
-            # Check criterion ID in column B (index 1)
-            criterion_cell_value = get_cell_value(cells[1])
+            criterion_cell_value = get_cell_value(criterion_cell)
             if criterion_cell_value == criterion_id:
-                # Update column D (Status) - index 3
-                if len(cells) > 3:
-                    set_cell_value(cells[3], status.value)
+                # Ensure the row has enough cells (at least 8 columns: A-H)
+                ensure_cells_exist(row, 8)
 
-                # Update column E (Derogation) - index 4
-                if len(cells) > 4:
-                    set_cell_value(cells[4], derogation.value)
+                # Now get cells at specific columns
+                # Column D (Status) - index 3
+                cell_d = get_cell_at_column(row, 3)
+                if cell_d:
+                    set_cell_value(cell_d, status.value)
 
-                # Update column F (Modifications) - index 5
-                if len(cells) > 5:
-                    set_cell_value(cells[5], modifications)
+                # Column E (Derogation) - index 4
+                cell_e = get_cell_at_column(row, 4)
+                if cell_e:
+                    set_cell_value(cell_e, derogation.value)
 
-                # Update column G (Comments) - index 6
-                if len(cells) > 6:
-                    set_cell_value(cells[6], comments)
+                # Column F (Modifications) - index 5
+                cell_f = get_cell_at_column(row, 5)
+                if cell_f:
+                    set_cell_value(cell_f, modifications)
 
-                # Update column H (Modification Date) - index 7
-                if len(cells) > 7:
+                # Column G (Comments) - index 6
+                cell_g = get_cell_at_column(row, 6)
+                if cell_g:
+                    set_cell_value(cell_g, comments)
+
+                # Column H (Modification Date) - index 7
+                cell_h = get_cell_at_column(row, 7)
+                if cell_h:
                     timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-                    set_cell_value(cells[7], timestamp)
+                    set_cell_value(cell_h, timestamp)
 
                 break
 
