@@ -192,9 +192,27 @@ class ODSAuditAnalyzer:
 
         # Convert TestResult objects to dictionaries compatible with ODS handler
         for criterion_id, result in test_results.items():
+            # Build modifications text for column F
+            # For NT/NC status, include the reason/recommendation
+            modifications_text = result.modifications
+
+            # If modifications is empty but we have issues or manual_check, use those
+            if not modifications_text:
+                if result.issues:
+                    # Join issues into modifications text
+                    modifications_text = "; ".join(result.issues[:5])
+                elif result.manual_check:
+                    # Use manual_check as the reason for NT status
+                    modifications_text = result.manual_check
+
+            # For NT status, prefix with indication that manual verification is needed
+            if result.status == Status.NOT_TESTED and modifications_text:
+                if not modifications_text.startswith("VÉRIFICATION"):
+                    modifications_text = f"À VÉRIFIER: {modifications_text}"
+
             results[criterion_id] = {
                 'status': result.status,
-                'modifications': result.modifications,
+                'modifications': modifications_text,
                 'comments': result.comments or result.manual_check
             }
 
