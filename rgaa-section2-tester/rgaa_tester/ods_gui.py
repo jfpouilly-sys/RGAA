@@ -233,8 +233,9 @@ class ODSAuditFrame(ttk.Frame):
             stats = page.get_statistics()
             status_text = self._format_page_status(stats)
 
-            # Determine if page has been checked (not all criteria are "not_tested")
-            is_checked = stats['not_tested'] < stats['total']
+            # Determine if page has been actually tested (has C or NC results, not just NA)
+            # A page is "checked" only if it has at least one C or NC result
+            is_checked = (stats['compliant'] + stats['non_compliant']) > 0
             row_tag = "checked" if is_checked else "not_checked"
 
             self.pages_tree.insert(
