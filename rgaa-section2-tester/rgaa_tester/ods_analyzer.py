@@ -301,18 +301,29 @@ class ODSAuditAnalyzer:
 
         return results
 
-    def analyze_all_pages(self, progress_callback=None) -> Dict:
+    def analyze_all_pages(self, progress_callback=None, log_callback=None) -> Dict:
         """
         Analyze all pages in the audit file.
 
         Args:
             progress_callback: Optional callback function(page_id, progress, total)
+            log_callback: Optional callback function(message) for logging
 
         Returns:
             Dictionary with summary statistics
         """
         pages = self.handler.get_sample_pages()
         total = len(pages)
+
+        # Use crawler's log callback if not provided
+        if log_callback is None and hasattr(self.crawler, '_callback_log'):
+            log_callback = self.crawler._callback_log
+
+        def _log(msg):
+            if log_callback:
+                log_callback(msg)
+            else:
+                print(msg)
 
         for i, page_info in enumerate(pages):
             page_id = page_info['page_id']
@@ -323,7 +334,8 @@ class ODSAuditAnalyzer:
             try:
                 self.analyze_page(page_id, run_automated_tests=True)
             except Exception as e:
-                print(f"Error analyzing {page_id}: {e}")
+                _log(f"⚠️ Erreur lors de l'analyse de {page_id}: {str(e)}")
+                # Continue with next page instead of stopping
 
         # Return global statistics
         return self.handler.calculate_synthesis()

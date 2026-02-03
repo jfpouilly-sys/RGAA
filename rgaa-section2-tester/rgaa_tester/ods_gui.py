@@ -406,7 +406,10 @@ class ODSAuditFrame(ttk.Frame):
                 if url:
                     self.log(f"   🔗 {url}")
 
-            stats = self.audit_analyzer.analyze_all_pages(progress_callback=progress_callback)
+            stats = self.audit_analyzer.analyze_all_pages(
+                progress_callback=progress_callback,
+                log_callback=self.log
+            )
 
             self.log("")
             self.log("=" * 50)
