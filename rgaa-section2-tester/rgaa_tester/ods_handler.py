@@ -7,6 +7,7 @@ Handles reading and writing grilleAudit.ods format files.
 
 import os
 import shutil
+from datetime import datetime
 from typing import List, Dict, Optional
 from odf.opendocument import load, OpenDocumentSpreadsheet
 from odf.table import Table, TableRow, TableCell
@@ -222,6 +223,7 @@ class RGAAAuditODSHandler:
             # Column E: Dérogation
             # Column F: Modifications
             # Column G: Commentaires
+            # Column H: Date de modification
 
             theme = row_values[0] if len(row_values) > 0 else ""
             criterion_id = row_values[1] if len(row_values) > 1 else ""
@@ -230,6 +232,7 @@ class RGAAAuditODSHandler:
             derogation_str = row_values[4] if len(row_values) > 4 else "N"
             modifications = row_values[5] if len(row_values) > 5 else ""
             comments = row_values[6] if len(row_values) > 6 else ""
+            modification_date = row_values[7] if len(row_values) > 7 else ""
 
             # Skip if no criterion ID
             if not criterion_id or not criterion_id[0].isdigit():
@@ -242,7 +245,8 @@ class RGAAAuditODSHandler:
                 status=Status.from_string(status_str),
                 derogation=Derogation.from_string(derogation_str),
                 modifications=modifications,
-                comments=comments
+                comments=comments,
+                modification_date=modification_date
             )
 
             page_audit.criteria.append(criterion)
@@ -297,10 +301,13 @@ class RGAAAuditODSHandler:
             modifications: Required modifications
             comments: Comments
         """
+        # Generate timestamp
+        timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+
         # Update in-memory data
         page = self.audit_data.get_page(page_id)
         if page:
-            page.update_criterion(criterion_id, status, derogation, modifications, comments)
+            page.update_criterion(criterion_id, status, derogation, modifications, comments, timestamp)
 
         # Update in ODS file
         sheet = self._get_sheet_by_name(page_id)
@@ -333,6 +340,11 @@ class RGAAAuditODSHandler:
                 # Update column G (Comments) - index 6
                 if len(cells) > 6:
                     set_cell_value(cells[6], comments)
+
+                # Update column H (Modification Date) - index 7
+                if len(cells) > 7:
+                    timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                    set_cell_value(cells[7], timestamp)
 
                 break
 

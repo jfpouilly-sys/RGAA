@@ -52,6 +52,7 @@ class AuditCriterion:
     derogation: Derogation = Derogation.NO
     modifications: str = ""
     comments: str = ""
+    modification_date: str = ""  # Date/time of last status modification
 
     def to_dict(self) -> Dict:
         """Convert to dictionary."""
@@ -62,7 +63,8 @@ class AuditCriterion:
             'status': self.status.value,
             'derogation': self.derogation.value,
             'modifications': self.modifications,
-            'comments': self.comments
+            'comments': self.comments,
+            'modification_date': self.modification_date
         }
 
 
@@ -83,7 +85,8 @@ class PageAudit:
 
     def update_criterion(self, criterion_id: str, status: Status,
                         derogation: Derogation = Derogation.NO,
-                        modifications: str = "", comments: str = "") -> bool:
+                        modifications: str = "", comments: str = "",
+                        modification_date: str = "") -> bool:
         """Update a criterion's values."""
         criterion = self.get_criterion(criterion_id)
         if criterion:
@@ -91,6 +94,7 @@ class PageAudit:
             criterion.derogation = derogation
             criterion.modifications = modifications
             criterion.comments = comments
+            criterion.modification_date = modification_date
             return True
         return False
 
