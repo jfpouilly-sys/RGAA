@@ -117,6 +117,10 @@ class ODSAuditFrame(ttk.Frame):
         self.pages_tree.column("url", width=300)
         self.pages_tree.column("status", width=100, anchor="center")
 
+        # Configure tags for row colors
+        self.pages_tree.tag_configure("checked", background="#cce5ff", foreground="#004085")  # Blue for checked pages
+        self.pages_tree.tag_configure("not_checked", background="white", foreground="black")  # Default
+
         self.pages_tree.pack(fill="both", expand=True)
 
         # Add context menu
@@ -229,6 +233,10 @@ class ODSAuditFrame(ttk.Frame):
             stats = page.get_statistics()
             status_text = self._format_page_status(stats)
 
+            # Determine if page has been checked (not all criteria are "not_tested")
+            is_checked = stats['not_tested'] < stats['total']
+            row_tag = "checked" if is_checked else "not_checked"
+
             self.pages_tree.insert(
                 "",
                 "end",
@@ -237,7 +245,8 @@ class ODSAuditFrame(ttk.Frame):
                     page.title or "(Sans titre)",
                     page.url or "(Absente)",
                     status_text
-                )
+                ),
+                tags=(row_tag,)
             )
 
     def _format_page_status(self, stats: dict) -> str:
