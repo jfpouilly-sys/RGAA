@@ -93,8 +93,15 @@ class ODSAuditAnalyzer:
 
         # Test Section 2: CADRES (Frames)
         try:
-            # Analyze the page
-            resultat_page = self.analyseur.analyser_page(url)
+            # Fetch the page HTML first
+            page = self.crawler.crawl_page_unique(url)
+
+            if not page or page.erreur:
+                error_msg = page.erreur if page else "Impossible de récupérer la page"
+                raise Exception(error_msg)
+
+            # Analyze the page with HTML and URL
+            resultat_page = self.analyseur.analyser_page(page.html, page.url)
 
             # Test criterion 2.1 (Frame titles present)
             if resultat_page.cadres_testes > 0:
