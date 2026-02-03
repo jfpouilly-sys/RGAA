@@ -94,13 +94,21 @@ class ODSAuditAnalyzer:
         # Test Section 2: CADRES (Frames)
         try:
             # Fetch the page HTML first
+            if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
+                self.crawler._callback_log(f"📡 Récupération de: {url}")
+
             page = self.crawler.crawl_page_unique(url)
 
-            if not page or page.erreur:
-                error_msg = page.erreur if page else "Impossible de récupérer la page"
-                raise Exception(error_msg)
+            if not page:
+                raise Exception("Impossible de récupérer la page - aucune réponse du serveur")
+
+            if page.erreur:
+                raise Exception(f"Erreur lors de la récupération: {page.erreur}")
 
             # Analyze the page with HTML and URL
+            if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
+                self.crawler._callback_log(f"🔍 Analyse du HTML ({len(page.html)} caractères)...")
+
             resultat_page = self.analyseur.analyser_page(page.html, page.url)
 
             # Test criterion 2.1 (Frame titles present)
@@ -147,7 +155,20 @@ class ODSAuditAnalyzer:
                     'comments': 'Aucun cadre détecté sur cette page.'
                 }
 
+            # Log analysis results
+            if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
+                frames_info = f"{resultat_page.cadres_testes} cadre(s) détecté(s)"
+                if resultat_page.cadres_testes > 0:
+                    conf_info = f", {resultat_page.cadres_testes - resultat_page.non_conformes_2_1} conforme(s)"
+                    self.crawler._callback_log(f"✓ Analyse terminée: {frames_info}{conf_info}")
+                else:
+                    self.crawler._callback_log(f"✓ Analyse terminée: {frames_info}")
+
         except Exception as e:
+            # Log the error
+            if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
+                self.crawler._callback_log(f"❌ Erreur: {str(e)}")
+
             # Mark as not tested if error occurs
             results["2.1"] = {
                 'status': Status.NOT_TESTED,
@@ -159,6 +180,8 @@ class ODSAuditAnalyzer:
                 'modifications': '',
                 'comments': f'Erreur lors du test automatique: {str(e)}'
             }
+            # Re-raise to let caller handle it
+            raise
 
         return results
 

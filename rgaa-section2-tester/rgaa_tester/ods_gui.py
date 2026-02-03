@@ -263,6 +263,10 @@ class ODSAuditFrame(ttk.Frame):
         try:
             self.log(f"Analyse de la page {page_id}...")
 
+            # Set up crawler logging callback
+            if self.audit_analyzer and self.audit_analyzer.crawler:
+                self.audit_analyzer.crawler.definir_callback_log(self.log)
+
             page = self.audit_analyzer.analyze_page(page_id, run_automated_tests=True)
 
             if page:
@@ -276,6 +280,8 @@ class ODSAuditFrame(ttk.Frame):
 
         except Exception as e:
             self.log(f"❌ Erreur lors de l'analyse: {str(e)}")
+            import traceback
+            self.log(f"Détails: {traceback.format_exc()}")
 
     def analyze_all_pages(self):
         """Analyze all pages in the audit file."""
@@ -299,6 +305,10 @@ class ODSAuditFrame(ttk.Frame):
         try:
             self.log("Début de l'analyse de toutes les pages...")
 
+            # Set up crawler logging callback
+            if self.audit_analyzer and self.audit_analyzer.crawler:
+                self.audit_analyzer.crawler.definir_callback_log(self.log)
+
             def progress_callback(page_id, current, total):
                 self.log(f"Analyse {current}/{total}: {page_id}...")
 
@@ -312,6 +322,8 @@ class ODSAuditFrame(ttk.Frame):
 
         except Exception as e:
             self.log(f"❌ Erreur lors de l'analyse: {str(e)}")
+            import traceback
+            self.log(f"Détails: {traceback.format_exc()}")
 
     def save_results(self):
         """Save the audit results to ODS file."""
