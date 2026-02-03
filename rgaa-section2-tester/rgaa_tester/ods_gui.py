@@ -464,7 +464,8 @@ class ODSAuditFrame(ttk.Frame):
             "Confirmation",
             "Réinitialiser tous les statuts à 'Non testé' ?\n\n"
             "Cette action réinitialisera toutes les évaluations de toutes les pages.\n"
-            "Les commentaires et modifications seront effacés."
+            "Les commentaires et modifications seront effacés.\n\n"
+            "Note : Les critères marqués 'NA' (Non Applicable) seront préservés."
         )
 
         if not result:
@@ -473,10 +474,16 @@ class ODSAuditFrame(ttk.Frame):
         try:
             self.log("Réinitialisation des statuts...")
 
-            # Reset all pages
+            # Reset all pages, but preserve NA statuses
             reset_count = 0
+            skipped_na_count = 0
             for page in self.audit_data.pages:
                 for criterion in page.criteria:
+                    # Skip criteria that are already marked as NA
+                    if criterion.status == Status.NOT_APPLICABLE:
+                        skipped_na_count += 1
+                        continue
+
                     self.audit_handler.update_criterion(
                         page_id=page.page_id,
                         criterion_id=criterion.criterion_id,
@@ -491,12 +498,17 @@ class ODSAuditFrame(ttk.Frame):
             self.audit_handler.save()
 
             self.log(f"✅ {reset_count} critère(s) réinitialisé(s)")
+            if skipped_na_count > 0:
+                self.log(f"⊘ {skipped_na_count} critère(s) NA préservé(s)")
             self.log("💾 Modifications sauvegardées")
 
             # Update UI
             self.populate_pages_list()
 
-            messagebox.showinfo("Succès", f"{reset_count} critère(s) réinitialisé(s) à 'Non testé'")
+            message = f"{reset_count} critère(s) réinitialisé(s) à 'Non testé'"
+            if skipped_na_count > 0:
+                message += f"\n{skipped_na_count} critère(s) NA préservé(s)"
+            messagebox.showinfo("Succès", message)
 
         except Exception as e:
             self.log(f"❌ Erreur lors de la réinitialisation: {str(e)}")

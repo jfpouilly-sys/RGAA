@@ -64,8 +64,16 @@ class ODSAuditAnalyzer:
         # Run automated tests
         results = self.run_automated_tests(url)
 
-        # Update criteria based on test results
+        # Update criteria based on test results, but skip NA criteria
         for criterion_id, result in results.items():
+            # Check if criterion is already marked as NA
+            criterion = page_data.get_criterion(criterion_id)
+            if criterion and criterion.status == Status.NOT_APPLICABLE:
+                # Skip updating NA criteria - they remain NA
+                if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
+                    self.crawler._callback_log(f"⊘ Critère {criterion_id} marqué NA - test ignoré")
+                continue
+
             self.handler.update_criterion(
                 page_id=page_id,
                 criterion_id=criterion_id,
