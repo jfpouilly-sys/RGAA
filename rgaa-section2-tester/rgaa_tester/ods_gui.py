@@ -303,7 +303,16 @@ class ODSAuditFrame(ttk.Frame):
     def _analyze_page_thread(self, page_id: str):
         """Analyze a page in a separate thread."""
         try:
-            self.log(f"Analyse de la page {page_id}...")
+            # Get page info
+            page_info = self.audit_handler.get_page_audit(page_id)
+            title = page_info.title if page_info else ""
+            url = page_info.url if page_info else ""
+
+            self.log("=" * 50)
+            self.log(f"📄 Analyse de {page_id}: {title}")
+            if url:
+                self.log(f"🔗 {url}")
+            self.log("=" * 50)
 
             # Set up crawler logging callback
             if self.audit_analyzer and self.audit_analyzer.crawler:
@@ -313,7 +322,13 @@ class ODSAuditFrame(ttk.Frame):
 
             if page:
                 stats = page.get_statistics()
-                self.log(f"✅ Page {page_id} analysée: {stats['compliant']}/{stats['total'] - stats['not_applicable']} conformes")
+                self.log("")
+                self.log("✅ ANALYSE TERMINÉE!")
+                self.log(f"📊 Résultats pour {page_id}:")
+                self.log(f"   - Conformes (C): {stats['compliant']}")
+                self.log(f"   - Non conformes (NC): {stats['non_compliant']}")
+                self.log(f"   - Non applicables (NA): {stats['not_applicable']}")
+                self.log(f"   - Non testés (NT): {stats['not_tested']}")
 
                 # Auto-save results
                 try:
@@ -322,15 +337,31 @@ class ODSAuditFrame(ttk.Frame):
                 except Exception as save_error:
                     self.log(f"⚠️ Avertissement: Sauvegarde échouée - {str(save_error)}")
 
-                # Update UI
+                # Update UI and show completion message
                 self.after(0, self.populate_pages_list)
+                self.after(0, lambda: self._show_page_analysis_complete(page_id, stats))
             else:
                 self.log(f"❌ Impossible d'analyser la page {page_id}")
+                self.after(0, lambda: messagebox.showerror("Erreur", f"Impossible d'analyser la page {page_id}"))
 
         except Exception as e:
             self.log(f"❌ Erreur lors de l'analyse: {str(e)}")
             import traceback
             self.log(f"Détails: {traceback.format_exc()}")
+            self.after(0, lambda: messagebox.showerror("Erreur", f"Erreur lors de l'analyse:\n{str(e)}"))
+
+    def _show_page_analysis_complete(self, page_id: str, stats: dict):
+        """Show page analysis completion message."""
+        message = (
+            f"Analyse de {page_id} terminée!\n\n"
+            f"📊 Résultats:\n"
+            f"  • Conformes (C): {stats['compliant']}\n"
+            f"  • Non conformes (NC): {stats['non_compliant']}\n"
+            f"  • Non applicables (NA): {stats['not_applicable']}\n"
+            f"  • Non testés (NT): {stats['not_tested']}\n\n"
+            f"Les résultats ont été sauvegardés."
+        )
+        messagebox.showinfo("Analyse terminée", message)
 
     def analyze_all_pages(self):
         """Analyze all pages in the audit file."""
@@ -352,19 +383,40 @@ class ODSAuditFrame(ttk.Frame):
     def _analyze_all_pages_thread(self):
         """Analyze all pages in a separate thread."""
         try:
+            self.log("=" * 50)
             self.log("Début de l'analyse de toutes les pages...")
+            self.log("=" * 50)
 
             # Set up crawler logging callback
             if self.audit_analyzer and self.audit_analyzer.crawler:
                 self.audit_analyzer.crawler.definir_callback_log(self.log)
 
+            # Get pages info for display
+            pages = self.audit_handler.get_sample_pages()
+            total = len(pages)
+
             def progress_callback(page_id, current, total):
-                self.log(f"Analyse {current}/{total}: {page_id}...")
+                # Find page info
+                page_info = next((p for p in pages if p['page_id'] == page_id), None)
+                title = page_info['title'] if page_info else ""
+                url = page_info['url'] if page_info else ""
+
+                self.log("")
+                self.log(f"📄 [{current}/{total}] Analyse de {page_id}: {title}")
+                if url:
+                    self.log(f"   🔗 {url}")
 
             stats = self.audit_analyzer.analyze_all_pages(progress_callback=progress_callback)
 
-            self.log("✅ Analyse terminée!")
-            self.log(f"Résultats: {stats['compliant']} conformes, {stats['non_compliant']} non conformes, {stats['not_applicable']} N/A")
+            self.log("")
+            self.log("=" * 50)
+            self.log("✅ ANALYSE TERMINÉE!")
+            self.log("=" * 50)
+            self.log(f"📊 Résultats:")
+            self.log(f"   - Conformes (C): {stats['compliant']}")
+            self.log(f"   - Non conformes (NC): {stats['non_compliant']}")
+            self.log(f"   - Non applicables (NA): {stats['not_applicable']}")
+            self.log(f"   - Non testés (NT): {stats['not_tested']}")
 
             # Auto-save results
             try:
@@ -373,13 +425,28 @@ class ODSAuditFrame(ttk.Frame):
             except Exception as save_error:
                 self.log(f"⚠️ Avertissement: Sauvegarde échouée - {str(save_error)}")
 
-            # Update UI
+            # Update UI and show completion message
             self.after(0, self.populate_pages_list)
+            self.after(0, lambda: self._show_analysis_complete(stats))
 
         except Exception as e:
             self.log(f"❌ Erreur lors de l'analyse: {str(e)}")
             import traceback
             self.log(f"Détails: {traceback.format_exc()}")
+            self.after(0, lambda: messagebox.showerror("Erreur", f"Erreur lors de l'analyse:\n{str(e)}"))
+
+    def _show_analysis_complete(self, stats: dict):
+        """Show analysis completion message."""
+        message = (
+            f"Analyse de toutes les pages terminée!\n\n"
+            f"📊 Résultats:\n"
+            f"  • Conformes (C): {stats['compliant']}\n"
+            f"  • Non conformes (NC): {stats['non_compliant']}\n"
+            f"  • Non applicables (NA): {stats['not_applicable']}\n"
+            f"  • Non testés (NT): {stats['not_tested']}\n\n"
+            f"Les résultats ont été sauvegardés automatiquement."
+        )
+        messagebox.showinfo("Analyse terminée", message)
 
     def save_results(self):
         """Save the audit results to ODS file."""
