@@ -200,27 +200,47 @@ class ODSAuditFrame(ttk.Frame):
             messagebox.showerror("Erreur", "Veuillez sélectionner un fichier ODS")
             return
 
-        try:
-            self.log("Chargement du fichier d'audit...")
+        self.log("Chargement du fichier d'audit...")
+        self.log("⏳ Veuillez patienter...")
 
+        # Run loading in background thread to keep GUI responsive
+        thread = threading.Thread(
+            target=self._load_file_thread,
+            args=(filepath,),
+            daemon=True
+        )
+        thread.start()
+
+    def _load_file_thread(self, filepath: str):
+        """Load file in background thread."""
+        try:
             self.audit_handler = RGAAAuditODSHandler(filepath)
             self.audit_data = self.audit_handler.load()
             self.audit_analyzer = ODSAuditAnalyzer(self.audit_handler, self.config)
 
-            # Update info labels
-            self.info_labels['date'].config(text=self.audit_data.date or "-")
-            self.info_labels['auditor'].config(text=self.audit_data.auditor or "-")
-            self.info_labels['context'].config(text=self.audit_data.context or "-")
-            self.info_labels['site'].config(text=self.audit_data.site_url or "-")
-
-            # Populate pages list
-            self.populate_pages_list()
-
-            self.log(f"✅ Fichier chargé: {len(self.audit_data.pages)} page(s) trouvée(s)")
+            # Update UI on main thread
+            self.after(0, self._load_file_complete)
 
         except Exception as e:
-            messagebox.showerror("Erreur", f"Impossible de charger le fichier:\n{str(e)}")
-            self.log(f"❌ Erreur: {str(e)}")
+            self.after(0, lambda: self._load_file_error(str(e)))
+
+    def _load_file_complete(self):
+        """Called when file loading completes successfully."""
+        # Update info labels
+        self.info_labels['date'].config(text=self.audit_data.date or "-")
+        self.info_labels['auditor'].config(text=self.audit_data.auditor or "-")
+        self.info_labels['context'].config(text=self.audit_data.context or "-")
+        self.info_labels['site'].config(text=self.audit_data.site_url or "-")
+
+        # Populate pages list
+        self.populate_pages_list()
+
+        self.log(f"✅ Fichier chargé: {len(self.audit_data.pages)} page(s) trouvée(s)")
+
+    def _load_file_error(self, error_msg: str):
+        """Called when file loading fails."""
+        messagebox.showerror("Erreur", f"Impossible de charger le fichier:\n{error_msg}")
+        self.log(f"❌ Erreur: {error_msg}")
 
     def populate_pages_list(self):
         """Populate the pages treeview."""
