@@ -20,6 +20,7 @@ from .config import get_config
 
 # Export full RGAA tester (106 criteria)
 from .full_rgaa_tester import FullRGAATester, WebPageAnalyzer, TestResult, run_full_rgaa_test
+from .content_detector import ContentDetector
 
 # Export ODS modules (optional feature)
 try:
@@ -36,6 +37,7 @@ try:
         'WebPageAnalyzer',
         'TestResult',
         'run_full_rgaa_test',
+        'ContentDetector',
         'Status',
         'Derogation',
         'AuditCriterion',
@@ -55,5 +57,6 @@ except ImportError:
         'FullRGAATester',
         'WebPageAnalyzer',
         'TestResult',
-        'run_full_rgaa_test'
+        'run_full_rgaa_test',
+        'ContentDetector'
     ]

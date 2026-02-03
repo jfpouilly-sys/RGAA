@@ -12,6 +12,7 @@ from typing import Dict, List, Optional, Any
 from bs4 import BeautifulSoup, Tag
 import requests
 from .ods_models import Status
+from .content_detector import ContentDetector
 
 
 @dataclass
@@ -125,17 +126,28 @@ class FullRGAATester:
         "13.10": "CONSULTATION", "13.11": "CONSULTATION", "13.12": "CONSULTATION"
     }
 
-    def __init__(self, analyzer: WebPageAnalyzer):
+    def __init__(self, analyzer: WebPageAnalyzer, use_content_detection: bool = True):
         """
         Initialise le testeur.
 
         Args:
             analyzer: Instance de WebPageAnalyzer avec la page chargée
+            use_content_detection: Si True, utilise la détection de contenu pour marquer automatiquement les NA
         """
         self.analyzer = analyzer
         self.soup = analyzer.soup
         self.url = analyzer.url
         self.html = analyzer.html or ""
+        self.use_content_detection = use_content_detection
+
+        # Initialize content detector for automatic NA detection
+        self.content_detector = ContentDetector(self.soup)
+        self.detection_results = None
+        self.auto_na_criteria = []
+
+        if use_content_detection:
+            self.detection_results = self.content_detector.detect_all()
+            self.auto_na_criteria = self.content_detector.get_na_criteria()
 
     # ========================================================================
     # THÈME 1: IMAGES (Critères 1.1 - 1.9)
@@ -3041,8 +3053,20 @@ class FullRGAATester:
 
         for criterion_id, test_method in test_methods:
             try:
-                result = test_method()
-                results[criterion_id] = result
+                # Check if criterion is auto-detected as NA
+                if self.use_content_detection and criterion_id in self.auto_na_criteria:
+                    na_reason = self.content_detector.get_na_reason(criterion_id)
+                    results[criterion_id] = TestResult(
+                        criterion_id,
+                        Status.NOT_APPLICABLE,
+                        [],
+                        na_reason,
+                        "[Auto-détecté] " + na_reason,
+                        1.0  # High confidence for auto-detection
+                    )
+                else:
+                    result = test_method()
+                    results[criterion_id] = result
             except Exception as e:
                 results[criterion_id] = TestResult(
                     criterion_id,
@@ -3081,8 +3105,29 @@ class FullRGAATester:
             'non_applicable': na,
             'non_teste': nt,
             'applicable': applicable,
-            'compliance_rate': round(compliance_rate, 1)
+            'compliance_rate': round(compliance_rate, 1),
+            'auto_detected_na': len(self.auto_na_criteria) if self.use_content_detection else 0
         }
+
+    def get_content_detection_summary(self) -> Dict:
+        """
+        Retourne un résumé de la détection de contenu.
+
+        Returns:
+            Dictionnaire avec les types de contenu détectés
+        """
+        if self.detection_results:
+            return self.content_detector.get_detection_summary()
+        return {}
+
+    def get_auto_na_criteria(self) -> List[str]:
+        """
+        Retourne la liste des critères NA auto-détectés.
+
+        Returns:
+            Liste des IDs de critères marqués NA automatiquement
+        """
+        return self.auto_na_criteria.copy()
 
 
 def run_full_rgaa_test(url: str, html: str = None) -> Dict:

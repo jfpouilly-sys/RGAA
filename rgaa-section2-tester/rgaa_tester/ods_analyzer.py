@@ -219,11 +219,16 @@ class ODSAuditAnalyzer:
         # Log summary
         if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
             summary = tester.get_summary(test_results)
+            auto_na = summary.get('auto_detected_na', 0)
             self.crawler._callback_log(
                 f"✓ Analyse complète: {summary['conforme']}C/{summary['non_conforme']}NC/"
                 f"{summary['non_applicable']}NA/{summary['non_teste']}NT "
                 f"({summary['compliance_rate']}% conformité)"
             )
+            if auto_na > 0:
+                self.crawler._callback_log(
+                    f"  ↳ {auto_na} critères NA auto-détectés (éléments absents de la page)"
+                )
 
         return results
 
