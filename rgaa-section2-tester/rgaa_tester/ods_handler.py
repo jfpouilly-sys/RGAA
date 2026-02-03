@@ -427,92 +427,80 @@ class RGAAAuditODSHandler:
         for i in range(3, len(rows)):
             row = rows[i]
 
-            # Get criterion ID from column B (index 1)
-            criterion_cell = get_cell_at_column(row, 1)
-            if not criterion_cell:
+            # Get criterion ID from column B (index 1) using expand_row (read-only)
+            row_values = expand_row(row)
+            if len(row_values) < 2:
                 continue
 
-            criterion_cell_value = get_cell_value(criterion_cell)
-            if criterion_cell_value == criterion_id:
-                # Expand all repeated cells to individual cells for this row
-                self._expand_row_cells(row, 8)
+            row_criterion_id = row_values[1] if len(row_values) > 1 else ""
+            if row_criterion_id != criterion_id:
+                continue
 
-                # Get all cells as a list after expansion
-                cells = list(row.getElementsByType(TableCell))
+            # Found the row - now expand cells and update values
+            # First, expand all cells to individual cells
+            self._expand_row_cells(row, 8)
 
-                # Ensure we have at least 8 cells
-                while len(cells) < 8:
-                    new_cell = TableCell()
-                    row.addElement(new_cell)
-                    cells.append(new_cell)
+            # Get all cells as a fresh list after expansion
+            cells = list(row.getElementsByType(TableCell))
 
-                # Column D (Status) - index 3
-                if len(cells) > 3:
-                    set_cell_value(cells[3], status.value)
+            # Column D (Status) - index 3
+            if len(cells) > 3:
+                set_cell_value(cells[3], status.value)
 
-                # Column E (Derogation) - index 4
-                if len(cells) > 4:
-                    set_cell_value(cells[4], derogation.value)
+            # Column E (Derogation) - index 4
+            if len(cells) > 4:
+                set_cell_value(cells[4], derogation.value)
 
-                # Column F (Modifications) - index 5
-                if len(cells) > 5:
-                    set_cell_value(cells[5], modifications)
+            # Column F (Modifications) - index 5
+            if len(cells) > 5:
+                set_cell_value(cells[5], modifications)
 
-                # Column G (Comments) - index 6
-                if len(cells) > 6:
-                    set_cell_value(cells[6], comments)
+            # Column G (Comments) - index 6
+            if len(cells) > 6:
+                set_cell_value(cells[6], comments)
 
-                # Column H (Modification Date) - index 7
-                if len(cells) > 7:
-                    set_cell_value(cells[7], timestamp)
+            # Column H (Modification Date) - index 7
+            if len(cells) > 7:
+                set_cell_value(cells[7], timestamp)
 
-                break
+            break
 
     def _expand_row_cells(self, row: TableRow, min_columns: int):
         """
         Expand all repeated cells in a row to individual cells.
 
+        This method completely rebuilds the row with individual cells
+        to ensure proper column ordering.
+
         Args:
             row: TableRow object
             min_columns: Minimum number of columns needed
         """
-        cells = list(row.getElementsByType(TableCell))
-        new_cells = []
-
-        for cell in cells:
+        # First, extract all cell values considering repeats
+        cell_values = []
+        for cell in row.getElementsByType(TableCell):
             repeat = cell.getAttribute("numbercolumnsrepeated")
             repeat = int(repeat) if repeat else 1
+            value = get_cell_value(cell)
+            # Limit repeat to reasonable number (avoid memory issues)
+            repeat = min(repeat, max(min_columns, 50))
+            cell_values.extend([value] * repeat)
 
-            if repeat > 1:
-                # Remove repeat attribute from original cell
-                cell.removeAttribute("numbercolumnsrepeated")
-                value = get_cell_value(cell)
-                new_cells.append(cell)
-
-                # Create individual cells for repetitions
-                for _ in range(repeat - 1):
-                    new_cell = TableCell()
-                    if value:
-                        new_cell.addElement(P(text=value))
-                    new_cells.append(new_cell)
-            else:
-                new_cells.append(cell)
-
-        # Clear existing cells and add expanded cells
-        for cell in cells:
+        # Remove all existing cells from row
+        cells_to_remove = list(row.getElementsByType(TableCell))
+        for cell in cells_to_remove:
             try:
                 row.removeChild(cell)
             except:
                 pass
 
-        for cell in new_cells:
-            row.addElement(cell)
-
-        # Add more cells if needed
-        while len(new_cells) < min_columns:
+        # Create new individual cells with values
+        num_cells = max(len(cell_values), min_columns)
+        for i in range(num_cells):
             new_cell = TableCell()
+            if i < len(cell_values) and cell_values[i]:
+                new_cell.addElement(P(text=cell_values[i]))
             row.addElement(new_cell)
-            new_cells.append(new_cell)
 
     def update_page_audit(self, page_audit: PageAudit):
         """
