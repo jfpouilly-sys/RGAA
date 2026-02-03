@@ -434,37 +434,85 @@ class RGAAAuditODSHandler:
 
             criterion_cell_value = get_cell_value(criterion_cell)
             if criterion_cell_value == criterion_id:
-                # Ensure the row has enough cells (at least 8 columns: A-H)
-                ensure_cells_exist(row, 8)
+                # Expand all repeated cells to individual cells for this row
+                self._expand_row_cells(row, 8)
 
-                # Now get cells at specific columns
+                # Get all cells as a list after expansion
+                cells = list(row.getElementsByType(TableCell))
+
+                # Ensure we have at least 8 cells
+                while len(cells) < 8:
+                    new_cell = TableCell()
+                    row.addElement(new_cell)
+                    cells.append(new_cell)
+
                 # Column D (Status) - index 3
-                cell_d = get_cell_at_column(row, 3)
-                if cell_d:
-                    set_cell_value(cell_d, status.value)
+                if len(cells) > 3:
+                    set_cell_value(cells[3], status.value)
 
                 # Column E (Derogation) - index 4
-                cell_e = get_cell_at_column(row, 4)
-                if cell_e:
-                    set_cell_value(cell_e, derogation.value)
+                if len(cells) > 4:
+                    set_cell_value(cells[4], derogation.value)
 
                 # Column F (Modifications) - index 5
-                cell_f = get_cell_at_column(row, 5)
-                if cell_f:
-                    set_cell_value(cell_f, modifications)
+                if len(cells) > 5:
+                    set_cell_value(cells[5], modifications)
 
                 # Column G (Comments) - index 6
-                cell_g = get_cell_at_column(row, 6)
-                if cell_g:
-                    set_cell_value(cell_g, comments)
+                if len(cells) > 6:
+                    set_cell_value(cells[6], comments)
 
                 # Column H (Modification Date) - index 7
-                cell_h = get_cell_at_column(row, 7)
-                if cell_h:
-                    timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-                    set_cell_value(cell_h, timestamp)
+                if len(cells) > 7:
+                    set_cell_value(cells[7], timestamp)
 
                 break
+
+    def _expand_row_cells(self, row: TableRow, min_columns: int):
+        """
+        Expand all repeated cells in a row to individual cells.
+
+        Args:
+            row: TableRow object
+            min_columns: Minimum number of columns needed
+        """
+        cells = list(row.getElementsByType(TableCell))
+        new_cells = []
+
+        for cell in cells:
+            repeat = cell.getAttribute("numbercolumnsrepeated")
+            repeat = int(repeat) if repeat else 1
+
+            if repeat > 1:
+                # Remove repeat attribute from original cell
+                cell.removeAttribute("numbercolumnsrepeated")
+                value = get_cell_value(cell)
+                new_cells.append(cell)
+
+                # Create individual cells for repetitions
+                for _ in range(repeat - 1):
+                    new_cell = TableCell()
+                    if value:
+                        new_cell.addElement(P(text=value))
+                    new_cells.append(new_cell)
+            else:
+                new_cells.append(cell)
+
+        # Clear existing cells and add expanded cells
+        for cell in cells:
+            try:
+                row.removeChild(cell)
+            except:
+                pass
+
+        for cell in new_cells:
+            row.addElement(cell)
+
+        # Add more cells if needed
+        while len(new_cells) < min_columns:
+            new_cell = TableCell()
+            row.addElement(new_cell)
+            new_cells.append(new_cell)
 
     def update_page_audit(self, page_audit: PageAudit):
         """
