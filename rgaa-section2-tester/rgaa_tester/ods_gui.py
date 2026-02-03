@@ -151,6 +151,18 @@ class ODSAuditFrame(ttk.Frame):
             command=self.show_statistics
         ).pack(side="left", padx=5)
 
+        ttk.Button(
+            action_frame,
+            text="📋 Voir journal",
+            command=self.view_log
+        ).pack(side="left", padx=5)
+
+        ttk.Button(
+            action_frame,
+            text="🔄 Réinitialiser statuts",
+            command=self.clear_status
+        ).pack(side="left", padx=5)
+
     def _create_log_section(self):
         """Create log output section."""
         log_frame = ttk.LabelFrame(self, text="📝 Journal", padding=10)
@@ -394,6 +406,101 @@ class ODSAuditFrame(ttk.Frame):
 
         except Exception as e:
             messagebox.showerror("Erreur", f"Impossible de générer les statistiques:\n{str(e)}")
+
+    def view_log(self):
+        """View and export the log content."""
+        # Get current log content
+        log_content = self.log_text.get("1.0", "end-1c")
+
+        if not log_content.strip():
+            messagebox.showinfo("Journal", "Le journal est vide")
+            return
+
+        # Create popup window
+        log_window = tk.Toplevel(self)
+        log_window.title("Journal d'activité")
+        log_window.geometry("800x600")
+
+        # Add text widget with scrollbar
+        text_frame = ttk.Frame(log_window, padding=10)
+        text_frame.pack(fill="both", expand=True)
+
+        text_widget = scrolledtext.ScrolledText(text_frame, wrap="word")
+        text_widget.pack(fill="both", expand=True)
+        text_widget.insert("1.0", log_content)
+        text_widget.config(state="disabled")
+
+        # Buttons frame
+        button_frame = ttk.Frame(log_window, padding=10)
+        button_frame.pack(fill="x")
+
+        def save_log():
+            """Save log to file."""
+            output_path = filedialog.asksaveasfilename(
+                title="Enregistrer le journal",
+                defaultextension=".txt",
+                filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+                initialfile="audit_journal.txt"
+            )
+            if output_path:
+                try:
+                    with open(output_path, 'w', encoding='utf-8') as f:
+                        f.write(log_content)
+                    messagebox.showinfo("Succès", f"Journal enregistré:\n{output_path}")
+                except Exception as e:
+                    messagebox.showerror("Erreur", f"Impossible d'enregistrer le journal:\n{str(e)}")
+
+        ttk.Button(button_frame, text="💾 Enregistrer", command=save_log).pack(side="left", padx=5)
+        ttk.Button(button_frame, text="Fermer", command=log_window.destroy).pack(side="left", padx=5)
+
+    def clear_status(self):
+        """Clear all status values and reset to NOT_TESTED."""
+        if not self.audit_handler:
+            messagebox.showwarning("Attention", "Aucun fichier chargé")
+            return
+
+        # Confirm action
+        result = messagebox.askyesno(
+            "Confirmation",
+            "Réinitialiser tous les statuts à 'Non testé' ?\n\n"
+            "Cette action réinitialisera toutes les évaluations de toutes les pages.\n"
+            "Les commentaires et modifications seront effacés."
+        )
+
+        if not result:
+            return
+
+        try:
+            self.log("Réinitialisation des statuts...")
+
+            # Reset all pages
+            reset_count = 0
+            for page in self.audit_data.pages:
+                for criterion in page.criteria:
+                    self.audit_handler.update_criterion(
+                        page_id=page.page_id,
+                        criterion_id=criterion.criterion_id,
+                        status=Status.NOT_TESTED,
+                        derogation=Derogation.NO,
+                        modifications="",
+                        comments=""
+                    )
+                    reset_count += 1
+
+            # Save changes
+            self.audit_handler.save()
+
+            self.log(f"✅ {reset_count} critère(s) réinitialisé(s)")
+            self.log("💾 Modifications sauvegardées")
+
+            # Update UI
+            self.populate_pages_list()
+
+            messagebox.showinfo("Succès", f"{reset_count} critère(s) réinitialisé(s) à 'Non testé'")
+
+        except Exception as e:
+            self.log(f"❌ Erreur lors de la réinitialisation: {str(e)}")
+            messagebox.showerror("Erreur", f"Impossible de réinitialiser:\n{str(e)}")
 
     def log(self, message: str):
         """
