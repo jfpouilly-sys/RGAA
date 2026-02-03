@@ -12,3 +12,7 @@ requests>=2.31.0
 
 # Utilitaires
 urllib3>=2.0.0
+
+# ODS File Handling (for RGAA audit template)
+odfpy>=1.4.1
+pandas>=2.0.0
