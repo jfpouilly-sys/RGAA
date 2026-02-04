@@ -7,6 +7,7 @@ Handles reading and writing grilleAudit.ods format files.
 
 import os
 import shutil
+import threading
 from datetime import datetime
 from typing import List, Dict, Optional
 from odf.opendocument import load, OpenDocumentSpreadsheet
@@ -200,6 +201,7 @@ class RGAAAuditODSHandler:
         self.doc = None
         self.audit_data = None
         self._sheets_cache = {}
+        self._lock = threading.RLock()  # Reentrant lock for thread-safe operations
 
     def load(self) -> AuditFile:
         """
@@ -400,6 +402,8 @@ class RGAAAuditODSHandler:
         """
         Update a single criterion evaluation.
 
+        Thread-safe: uses lock for concurrent access.
+
         Args:
             page_id: Page identifier (P01, P02, etc.)
             criterion_id: Criterion ID (e.g., "2.1")
@@ -408,62 +412,63 @@ class RGAAAuditODSHandler:
             modifications: Required modifications
             comments: Comments
         """
-        # Generate timestamp
-        timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        with self._lock:
+            # Generate timestamp
+            timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
-        # Update in-memory data
-        page = self.audit_data.get_page(page_id)
-        if page:
-            page.update_criterion(criterion_id, status, derogation, modifications, comments, timestamp)
+            # Update in-memory data
+            page = self.audit_data.get_page(page_id)
+            if page:
+                page.update_criterion(criterion_id, status, derogation, modifications, comments, timestamp)
 
-        # Update in ODS file
-        sheet = self._get_sheet_by_name(page_id)
-        if not sheet:
-            return
+            # Update in ODS file
+            sheet = self._get_sheet_by_name(page_id)
+            if not sheet:
+                return
 
-        rows = sheet.getElementsByType(TableRow)
+            rows = sheet.getElementsByType(TableRow)
 
-        # Find the row for this criterion (starting from row 4, index 3)
-        for i in range(3, len(rows)):
-            row = rows[i]
+            # Find the row for this criterion (starting from row 4, index 3)
+            for i in range(3, len(rows)):
+                row = rows[i]
 
-            # Get criterion ID from column B (index 1) using expand_row (read-only)
-            row_values = expand_row(row)
-            if len(row_values) < 2:
-                continue
+                # Get criterion ID from column B (index 1) using expand_row (read-only)
+                row_values = expand_row(row)
+                if len(row_values) < 2:
+                    continue
 
-            row_criterion_id = row_values[1] if len(row_values) > 1 else ""
-            if row_criterion_id != criterion_id:
-                continue
+                row_criterion_id = row_values[1] if len(row_values) > 1 else ""
+                if row_criterion_id != criterion_id:
+                    continue
 
-            # Found the row - now expand cells and update values
-            # First, expand all cells to individual cells
-            self._expand_row_cells(row, 8)
+                # Found the row - now expand cells and update values
+                # First, expand all cells to individual cells
+                self._expand_row_cells(row, 8)
 
-            # Get all cells as a fresh list after expansion
-            cells = list(row.getElementsByType(TableCell))
+                # Get all cells as a fresh list after expansion
+                cells = list(row.getElementsByType(TableCell))
 
-            # Column D (Status) - index 3
-            if len(cells) > 3:
-                set_cell_value(cells[3], status.value)
+                # Column D (Status) - index 3
+                if len(cells) > 3:
+                    set_cell_value(cells[3], status.value)
 
-            # Column E (Derogation) - index 4
-            if len(cells) > 4:
-                set_cell_value(cells[4], derogation.value)
+                # Column E (Derogation) - index 4
+                if len(cells) > 4:
+                    set_cell_value(cells[4], derogation.value)
 
-            # Column F (Modifications) - index 5
-            if len(cells) > 5:
-                set_cell_value(cells[5], modifications)
+                # Column F (Modifications) - index 5
+                if len(cells) > 5:
+                    set_cell_value(cells[5], modifications)
 
-            # Column G (Comments) - index 6
-            if len(cells) > 6:
-                set_cell_value(cells[6], comments)
+                # Column G (Comments) - index 6
+                if len(cells) > 6:
+                    set_cell_value(cells[6], comments)
 
-            # Column H (Modification Date) - index 7
-            if len(cells) > 7:
-                set_cell_value(cells[7], timestamp)
+                # Column H (Modification Date) - index 7
+                if len(cells) > 7:
+                    set_cell_value(cells[7], timestamp)
 
-            break
+                break
 
     def _expand_row_cells(self, row: TableRow, min_columns: int):
         """
@@ -523,21 +528,24 @@ class RGAAAuditODSHandler:
         """
         Save the modified .ods file.
 
+        Thread-safe: uses lock for concurrent access.
+
         Args:
             output_path: Output file path (defaults to original path)
         """
-        if not self.doc:
-            raise ValueError("No document loaded")
+        with self._lock:
+            if not self.doc:
+                raise ValueError("No document loaded")
 
-        output_path = output_path or self.filepath
+            output_path = output_path or self.filepath
 
-        # Create backup if overwriting original
-        if output_path == self.filepath:
-            backup_path = self.filepath + ".backup"
-            shutil.copy2(self.filepath, backup_path)
+            # Create backup if overwriting original
+            if output_path == self.filepath:
+                backup_path = self.filepath + ".backup"
+                shutil.copy2(self.filepath, backup_path)
 
-        # Save the document
-        self.doc.save(output_path)
+            # Save the document
+            self.doc.save(output_path)
 
     def calculate_synthesis(self) -> Dict:
         """

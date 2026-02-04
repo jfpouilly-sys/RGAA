@@ -8,6 +8,7 @@ Provides Tkinter interface for working with grilleAudit.ods files.
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from .ods_handler import RGAAAuditODSHandler
@@ -44,6 +45,9 @@ class ODSAuditFrame(ttk.Frame):
 
         # Pages list section
         self._create_pages_section()
+
+        # Options section (parallel analysis)
+        self._create_options_section()
 
         # Action buttons section
         self._create_actions_section()
@@ -125,6 +129,39 @@ class ODSAuditFrame(ttk.Frame):
 
         # Add context menu
         self.pages_tree.bind("<Double-1>", lambda e: self.analyze_selected_page())
+
+    def _create_options_section(self):
+        """Create options section for parallel analysis."""
+        options_frame = ttk.LabelFrame(self, text="⚙️ Options d'analyse", padding=10)
+        options_frame.pack(fill="x", padx=10, pady=5)
+
+        # Parallel analysis checkbox
+        self.parallel_enabled = tk.BooleanVar(value=False)
+        parallel_check = ttk.Checkbutton(
+            options_frame,
+            text="Analyse parallèle",
+            variable=self.parallel_enabled
+        )
+        parallel_check.pack(side="left", padx=5)
+
+        # Number of workers
+        ttk.Label(options_frame, text="Nombre de threads:").pack(side="left", padx=(20, 5))
+        self.parallel_workers = tk.IntVar(value=4)
+        workers_spinbox = ttk.Spinbox(
+            options_frame,
+            from_=2,
+            to=16,
+            width=5,
+            textvariable=self.parallel_workers
+        )
+        workers_spinbox.pack(side="left", padx=5)
+
+        # Info label
+        ttk.Label(
+            options_frame,
+            text="(Recommandé: 4-8 pour machines puissantes)",
+            foreground="gray"
+        ).pack(side="left", padx=10)
 
     def _create_actions_section(self):
         """Create action buttons section."""
@@ -383,8 +420,14 @@ class ODSAuditFrame(ttk.Frame):
     def _analyze_all_pages_thread(self):
         """Analyze all pages in a separate thread."""
         try:
+            parallel_enabled = self.parallel_enabled.get()
+            num_workers = self.parallel_workers.get()
+
             self.log("=" * 50)
-            self.log("Début de l'analyse de toutes les pages...")
+            if parallel_enabled:
+                self.log(f"Début de l'analyse parallèle ({num_workers} threads)...")
+            else:
+                self.log("Début de l'analyse séquentielle...")
             self.log("=" * 50)
 
             # Set up crawler logging callback
@@ -395,21 +438,25 @@ class ODSAuditFrame(ttk.Frame):
             pages = self.audit_handler.get_sample_pages()
             total = len(pages)
 
-            def progress_callback(page_id, current, total):
-                # Find page info
-                page_info = next((p for p in pages if p['page_id'] == page_id), None)
-                title = page_info['title'] if page_info else ""
-                url = page_info['url'] if page_info else ""
+            if parallel_enabled:
+                # Parallel analysis
+                stats = self._analyze_pages_parallel(pages, num_workers)
+            else:
+                # Sequential analysis
+                def progress_callback(page_id, current, total):
+                    page_info = next((p for p in pages if p['page_id'] == page_id), None)
+                    title = page_info['title'] if page_info else ""
+                    url = page_info['url'] if page_info else ""
 
-                self.log("")
-                self.log(f"📄 [{current}/{total}] Analyse de {page_id}: {title}")
-                if url:
-                    self.log(f"   🔗 {url}")
+                    self.log("")
+                    self.log(f"📄 [{current}/{total}] Analyse de {page_id}: {title}")
+                    if url:
+                        self.log(f"   🔗 {url}")
 
-            stats = self.audit_analyzer.analyze_all_pages(
-                progress_callback=progress_callback,
-                log_callback=self.log
-            )
+                stats = self.audit_analyzer.analyze_all_pages(
+                    progress_callback=progress_callback,
+                    log_callback=self.log
+                )
 
             self.log("")
             self.log("=" * 50)
@@ -437,6 +484,75 @@ class ODSAuditFrame(ttk.Frame):
             import traceback
             self.log(f"Détails: {traceback.format_exc()}")
             self.after(0, lambda: messagebox.showerror("Erreur", f"Erreur lors de l'analyse:\n{str(e)}"))
+
+    def _analyze_pages_parallel(self, pages: list, num_workers: int) -> dict:
+        """
+        Analyze pages in parallel using ThreadPoolExecutor.
+
+        Args:
+            pages: List of page info dictionaries
+            num_workers: Number of parallel workers
+
+        Returns:
+            Statistics dictionary
+        """
+        import threading
+
+        total = len(pages)
+        completed = [0]  # Use list to allow modification in nested function
+        lock = threading.Lock()
+
+        def analyze_single_page(page_info):
+            """Analyze a single page (runs in worker thread)."""
+            page_id = page_info['page_id']
+            title = page_info['title']
+            url = page_info['url']
+
+            # Log start (thread-safe via self.log using after())
+            with lock:
+                completed[0] += 1
+                current = completed[0]
+
+            self.log("")
+            self.log(f"📄 [{current}/{total}] Analyse de {page_id}: {title}")
+            if url:
+                self.log(f"   🔗 {url}")
+
+            try:
+                # Each thread needs its own crawler for HTTP requests
+                from .crawler import Crawler
+                from .ods_analyzer import ODSAuditAnalyzer
+
+                # Create a thread-local analyzer that shares the handler
+                thread_analyzer = ODSAuditAnalyzer.__new__(ODSAuditAnalyzer)
+                thread_analyzer.handler = self.audit_handler
+                thread_analyzer.config = self.config
+                thread_analyzer.crawler = Crawler(self.config)
+                thread_analyzer.crawler.definir_callback_log(self.log)
+                thread_analyzer.full_rgaa_mode = True
+                thread_analyzer.analyseur = None
+
+                # Analyze the page
+                thread_analyzer.analyze_page(page_id, run_automated_tests=True)
+
+                return {'page_id': page_id, 'success': True}
+
+            except Exception as e:
+                self.log(f"⚠️ Erreur {page_id}: {str(e)}")
+                return {'page_id': page_id, 'success': False, 'error': str(e)}
+
+        # Run analysis in parallel
+        self.log(f"🚀 Lancement de {num_workers} workers parallèles...")
+
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            futures = {executor.submit(analyze_single_page, page): page for page in pages}
+
+            for future in as_completed(futures):
+                result = future.result()
+                # Results are logged within each worker
+
+        # Calculate final statistics
+        return self.audit_handler.calculate_synthesis()
 
     def _show_analysis_complete(self, stats: dict):
         """Show analysis completion message."""
