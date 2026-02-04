@@ -124,8 +124,8 @@ class ODSAuditAnalyzer:
         # Reload updated page data
         updated_page = self.handler.get_page_audit(page_id)
 
-        # Save CSV file for this page
-        csv_path = self.save_page_csv(page_id)
+        # Save CSV file for this page (use memory data for correct results)
+        csv_path = self.save_page_csv(page_id, use_memory_data=True)
         if csv_path and hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
             self.crawler._callback_log(f"💾 CSV sauvegardé: {csv_path}")
 
