@@ -56,12 +56,18 @@ class ODSAuditAnalyzer:
         if url in ["Absente", ""] or not url.startswith("http"):
             # Log that page is absent
             if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
-                self.crawler._callback_log(f"⊘ Page {page_id} absente ou URL invalide - marquée NA")
+                self.crawler._callback_log(f"⊘ Page {page_id} absente ou URL invalide - tous les critères marqués NA")
+                self.crawler._callback_log(f"   Critère | Description | Statut")
+                self.crawler._callback_log(f"   " + "-" * 60)
 
             # Mark all criteria as NA in memory (fast)
             for criterion in page_data.criteria:
                 criterion.status = Status.NOT_APPLICABLE
                 criterion.modifications = "Page absente ou URL invalide"
+                # Log each criterion
+                if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
+                    desc = criterion.description[:50] + "..." if len(criterion.description) > 50 else criterion.description
+                    self.crawler._callback_log(f"   {criterion.criterion_id} | {desc} | ⊘ NA")
 
             # Save CSV for this page (use memory data since ODS not updated)
             csv_path = self.save_page_csv(page_id, use_memory_data=True)
@@ -76,15 +82,36 @@ class ODSAuditAnalyzer:
         # Run automated tests
         results = self.run_automated_tests(url)
 
+        # Helper to get status symbol
+        def status_symbol(status):
+            symbols = {
+                Status.COMPLIANT: "✓ C",
+                Status.NON_COMPLIANT: "✗ NC",
+                Status.NOT_APPLICABLE: "⊘ NA",
+                Status.NOT_TESTED: "? NT"
+            }
+            return symbols.get(status, "? NT")
+
+        # Log header for criteria list
+        if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
+            self.crawler._callback_log(f"   Critère | Description | Statut")
+            self.crawler._callback_log(f"   " + "-" * 60)
+
         # Update criteria based on test results, but skip NA criteria
         for criterion_id, result in results.items():
-            # Check if criterion is already marked as NA
+            # Get criterion info for logging
             criterion = page_data.get_criterion(criterion_id)
+            description = criterion.description[:50] + "..." if criterion and len(criterion.description) > 50 else (criterion.description if criterion else "")
+
             if criterion and criterion.status == Status.NOT_APPLICABLE:
                 # Skip updating NA criteria - they remain NA
                 if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
-                    self.crawler._callback_log(f"⊘ Critère {criterion_id} marqué NA - test ignoré")
+                    self.crawler._callback_log(f"   {criterion_id} | {description} | {status_symbol(Status.NOT_APPLICABLE)} (pré-marqué)")
                 continue
+
+            # Log criterion being tested with result
+            if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
+                self.crawler._callback_log(f"   {criterion_id} | {description} | {status_symbol(result['status'])}")
 
             self.handler.update_criterion(
                 page_id=page_id,
