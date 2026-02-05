@@ -306,6 +306,52 @@ class ODSAuditFrame(ttk.Frame):
         except Exception:
             self._log_file = None
 
+    def _make_page_logger(self, page_id: str):
+        """
+        Create a logger that writes to both the general log and a page-specific log file.
+
+        Args:
+            page_id: Page identifier (P01, P02, etc.)
+
+        Returns:
+            Tuple of (page_logger_function, page_log_file_handle)
+        """
+        import os
+        from datetime import datetime
+
+        ods_dir = os.path.dirname(self.file_path_var.get()) or "."
+        log_path = os.path.join(ods_dir, f"{page_id}.log")
+
+        try:
+            page_file = open(log_path, 'w', encoding='utf-8')
+            page_file.write(f"{'=' * 60}\n")
+            page_file.write(f"Log {page_id} - {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n")
+            page_file.write(f"{'=' * 60}\n")
+            page_file.flush()
+        except Exception:
+            page_file = None
+
+        def page_logger(message):
+            # Write to general log (thread-safe via self.after)
+            self.log(message)
+            # Write to page-specific log file
+            if page_file:
+                try:
+                    page_file.write(f"{message}\n")
+                    page_file.flush()
+                except Exception:
+                    pass
+
+        return page_logger, page_file
+
+    def _close_page_logger(self, page_log_file):
+        """Close a page-specific log file handle."""
+        if page_log_file:
+            try:
+                page_log_file.close()
+            except Exception:
+                pass
+
     def _load_file_error(self, error_msg: str):
         """Called when file loading fails."""
         messagebox.showerror("Erreur", f"Impossible de charger le fichier:\n{error_msg}")
@@ -371,53 +417,58 @@ class ODSAuditFrame(ttk.Frame):
 
     def _analyze_page_thread(self, page_id: str):
         """Analyze a page in a separate thread."""
+        # Create per-page logger
+        page_logger, page_log_file = self._make_page_logger(page_id)
+
         try:
             # Get page info
             page_info = self.audit_handler.get_page_audit(page_id)
             title = page_info.title if page_info else ""
             url = page_info.url if page_info else ""
 
-            self.log("=" * 50)
-            self.log(f"📄 Analyse de {page_id}: {title}")
+            page_logger("=" * 50)
+            page_logger(f"📄 Analyse de {page_id}: {title}")
             if url:
-                self.log(f"🔗 {url}")
-            self.log("=" * 50)
+                page_logger(f"🔗 {url}")
+            page_logger("=" * 50)
 
-            # Set up crawler logging callback
+            # Set up crawler logging callback to page logger
             if self.audit_analyzer and self.audit_analyzer.crawler:
-                self.audit_analyzer.crawler.definir_callback_log(self.log)
+                self.audit_analyzer.crawler.definir_callback_log(page_logger)
 
             page = self.audit_analyzer.analyze_page(page_id, run_automated_tests=True)
 
             if page:
                 stats = page.get_statistics()
-                self.log("")
-                self.log("✅ ANALYSE TERMINÉE!")
-                self.log(f"📊 Résultats pour {page_id}:")
-                self.log(f"   - Conformes (C): {stats['compliant']}")
-                self.log(f"   - Non conformes (NC): {stats['non_compliant']}")
-                self.log(f"   - Non applicables (NA): {stats['not_applicable']}")
-                self.log(f"   - Non testés (NT): {stats['not_tested']}")
+                page_logger("")
+                page_logger("✅ ANALYSE TERMINÉE!")
+                page_logger(f"📊 Résultats pour {page_id}:")
+                page_logger(f"   - Conformes (C): {stats['compliant']}")
+                page_logger(f"   - Non conformes (NC): {stats['non_compliant']}")
+                page_logger(f"   - Non applicables (NA): {stats['not_applicable']}")
+                page_logger(f"   - Non testés (NT): {stats['not_tested']}")
 
                 # Auto-save results
                 try:
                     self.audit_handler.save()
-                    self.log("💾 Résultats sauvegardés automatiquement")
+                    page_logger("💾 Résultats sauvegardés automatiquement")
                 except Exception as save_error:
-                    self.log(f"⚠️ Avertissement: Sauvegarde échouée - {str(save_error)}")
+                    page_logger(f"⚠️ Avertissement: Sauvegarde échouée - {str(save_error)}")
 
                 # Update UI and show completion message
                 self.after(0, self.populate_pages_list)
                 self.after(0, lambda: self._show_page_analysis_complete(page_id, stats))
             else:
-                self.log(f"❌ Impossible d'analyser la page {page_id}")
+                page_logger(f"❌ Impossible d'analyser la page {page_id}")
                 self.after(0, lambda: messagebox.showerror("Erreur", f"Impossible d'analyser la page {page_id}"))
 
         except Exception as e:
-            self.log(f"❌ Erreur lors de l'analyse: {str(e)}")
+            page_logger(f"❌ Erreur lors de l'analyse: {str(e)}")
             import traceback
-            self.log(f"Détails: {traceback.format_exc()}")
+            page_logger(f"Détails: {traceback.format_exc()}")
             self.after(0, lambda: messagebox.showerror("Erreur", f"Erreur lors de l'analyse:\n{str(e)}"))
+        finally:
+            self._close_page_logger(page_log_file)
 
     def _show_page_analysis_complete(self, page_id: str, stats: dict):
         """Show page analysis completion message."""
@@ -474,21 +525,32 @@ class ODSAuditFrame(ttk.Frame):
                 # Parallel analysis
                 stats = self._analyze_pages_parallel(pages, num_workers)
             else:
-                # Sequential analysis
-                def progress_callback(page_id, current, total):
-                    page_info = next((p for p in pages if p['page_id'] == page_id), None)
-                    title = page_info['title'] if page_info else ""
-                    url = page_info['url'] if page_info else ""
+                # Sequential analysis with per-page log files
+                for i, page_info in enumerate(pages):
+                    page_id = page_info['page_id']
+                    title = page_info['title']
+                    url = page_info['url']
 
-                    self.log("")
-                    self.log(f"📄 [{current}/{total}] Analyse de {page_id}: {title}")
-                    if url:
-                        self.log(f"   🔗 {url}")
+                    # Create per-page logger
+                    page_logger, page_log_file = self._make_page_logger(page_id)
 
-                stats = self.audit_analyzer.analyze_all_pages(
-                    progress_callback=progress_callback,
-                    log_callback=self.log
-                )
+                    try:
+                        page_logger("")
+                        page_logger(f"📄 [{i + 1}/{total}] Analyse de {page_id}: {title}")
+                        if url:
+                            page_logger(f"   🔗 {url}")
+
+                        # Set crawler callback to page logger
+                        if self.audit_analyzer and self.audit_analyzer.crawler:
+                            self.audit_analyzer.crawler.definir_callback_log(page_logger)
+
+                        self.audit_analyzer.analyze_page(page_id, run_automated_tests=True)
+                    except Exception as e:
+                        page_logger(f"⚠️ Erreur lors de l'analyse de {page_id}: {str(e)}")
+                    finally:
+                        self._close_page_logger(page_log_file)
+
+                stats = self.audit_handler.calculate_synthesis()
 
             self.log("")
             self.log("=" * 50)
@@ -540,15 +602,18 @@ class ODSAuditFrame(ttk.Frame):
             title = page_info['title']
             url = page_info['url']
 
+            # Create per-page logger for this thread
+            page_logger, page_log_file = self._make_page_logger(page_id)
+
             # Log start (thread-safe via self.log using after())
             with lock:
                 completed[0] += 1
                 current = completed[0]
 
-            self.log("")
-            self.log(f"📄 [{current}/{total}] Analyse de {page_id}: {title}")
+            page_logger("")
+            page_logger(f"📄 [{current}/{total}] Analyse de {page_id}: {title}")
             if url:
-                self.log(f"   🔗 {url}")
+                page_logger(f"   🔗 {url}")
 
             try:
                 # Each thread needs its own crawler for HTTP requests
@@ -560,7 +625,7 @@ class ODSAuditFrame(ttk.Frame):
                 thread_analyzer.handler = self.audit_handler
                 thread_analyzer.config = self.config
                 thread_analyzer.crawler = Crawler(self.config)
-                thread_analyzer.crawler.definir_callback_log(self.log)
+                thread_analyzer.crawler.definir_callback_log(page_logger)
                 thread_analyzer.full_rgaa_mode = True
                 thread_analyzer.analyseur = None
 
@@ -570,8 +635,10 @@ class ODSAuditFrame(ttk.Frame):
                 return {'page_id': page_id, 'success': True}
 
             except Exception as e:
-                self.log(f"⚠️ Erreur {page_id}: {str(e)}")
+                page_logger(f"⚠️ Erreur {page_id}: {str(e)}")
                 return {'page_id': page_id, 'success': False, 'error': str(e)}
+            finally:
+                self._close_page_logger(page_log_file)
 
         # Run analysis in parallel
         self.log(f"🚀 Lancement de {num_workers} workers parallèles...")
