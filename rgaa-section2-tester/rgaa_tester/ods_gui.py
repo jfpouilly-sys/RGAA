@@ -32,6 +32,8 @@ class ODSAuditFrame(ttk.Frame):
         self.audit_analyzer = None
         self.audit_data = None
         self.config = get_config()
+        self._log_file = None  # File handle for auto-save log
+        self._log_file_path = None
 
         self.create_widgets()
 
@@ -269,10 +271,40 @@ class ODSAuditFrame(ttk.Frame):
         self.info_labels['context'].config(text=self.audit_data.context or "-")
         self.info_labels['site'].config(text=self.audit_data.site_url or "-")
 
+        # Open log file in the same directory as the ODS file
+        self._open_log_file()
+
         # Populate pages list
         self.populate_pages_list()
 
         self.log(f"✅ Fichier chargé: {len(self.audit_data.pages)} page(s) trouvée(s)")
+
+    def _open_log_file(self):
+        """Open the log file for auto-saving."""
+        try:
+            # Close previous log file if open
+            if self._log_file:
+                self._log_file.close()
+
+            # Create log file path next to the ODS file
+            import os
+            ods_dir = os.path.dirname(self.file_path_var.get())
+            if not ods_dir:
+                ods_dir = "."
+            self._log_file_path = os.path.join(ods_dir, "audit_journal.log")
+
+            # Open in append mode
+            self._log_file = open(self._log_file_path, 'a', encoding='utf-8')
+
+            # Write session separator
+            from datetime import datetime
+            self._log_file.write(f"\n{'=' * 60}\n")
+            self._log_file.write(f"Session: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n")
+            self._log_file.write(f"Fichier: {self.file_path_var.get()}\n")
+            self._log_file.write(f"{'=' * 60}\n")
+            self._log_file.flush()
+        except Exception:
+            self._log_file = None
 
     def _load_file_error(self, error_msg: str):
         """Called when file loading fails."""
@@ -747,3 +779,11 @@ class ODSAuditFrame(ttk.Frame):
         self.log_text.insert("end", f"{message}\n")
         self.log_text.see("end")
         self.log_text.config(state="disabled")
+
+        # Auto-save to log file
+        if self._log_file:
+            try:
+                self._log_file.write(f"{message}\n")
+                self._log_file.flush()
+            except Exception:
+                pass
