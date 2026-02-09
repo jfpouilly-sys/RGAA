@@ -467,8 +467,9 @@ class ODSAuditAnalyzer:
             with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
                 writer = csv.writer(csvfile, delimiter=';', quoting=csv.QUOTE_MINIMAL)
 
-                # Write header
+                # Write header (including Page column for compatibility with populate_xlsx_audit.py)
                 writer.writerow([
+                    'Page',
                     'Thématique',
                     'Critère',
                     'Description',
@@ -482,6 +483,7 @@ class ODSAuditAnalyzer:
                 # Write criteria rows
                 for criterion in page_data.criteria:
                     writer.writerow([
+                        page_id,
                         criterion.theme,
                         criterion.criterion_id,
                         criterion.description,
