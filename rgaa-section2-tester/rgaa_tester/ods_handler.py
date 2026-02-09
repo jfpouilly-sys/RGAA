@@ -229,6 +229,19 @@ class RGAAAuditODSHandler:
             except Exception as e:
                 print(f"Warning: Could not parse sheet {page_id}: {e}")
 
+        # Check for duplicate URLs
+        url_to_pages = {}
+        for page in self.audit_data.pages:
+            if page.url and page.url not in ["Absente", ""]:
+                if page.url in url_to_pages:
+                    url_to_pages[page.url].append(page.page_id)
+                else:
+                    url_to_pages[page.url] = [page.page_id]
+
+        for url, page_ids in url_to_pages.items():
+            if len(page_ids) > 1:
+                print(f"⚠️ ATTENTION: URL dupliquée - {url} utilisée par: {', '.join(page_ids)}")
+
         return self.audit_data
 
     def _get_sheet_by_name(self, sheet_name: str) -> Optional[Table]:
@@ -300,18 +313,38 @@ class RGAAAuditODSHandler:
         if len(rows) < 4:
             return None
 
-        # Row 2: [Page Title] : [URL]
+        # Row 2: [Page Title] : [URL] or just [URL]
         row_2 = expand_row(rows[1])
         page_title = ""
         page_url = ""
         if len(row_2) > 0 and row_2[0]:
-            # Parse format "Title : URL"
-            parts = row_2[0].split(':', 1)
-            if len(parts) == 2:
-                page_title = parts[0].strip()
-                page_url = parts[1].strip()
+            cell_value = row_2[0].strip()
+
+            # Check if the cell starts with a URL (http:// or https://)
+            if cell_value.startswith(('http://', 'https://')):
+                # Cell contains just a URL, no title
+                page_url = cell_value
+                page_title = ""
+            elif ' : http' in cell_value:
+                # Format "Title : URL" - split on " : " followed by http
+                idx = cell_value.find(' : http')
+                if idx > 0:
+                    page_title = cell_value[:idx].strip()
+                    page_url = cell_value[idx + 3:].strip()  # Skip " : "
+                else:
+                    page_title = cell_value
             else:
-                page_title = row_2[0].strip()
+                # Try simple colon split for other formats
+                parts = cell_value.split(':', 1)
+                if len(parts) == 2 and parts[1].strip().startswith('//'):
+                    # Looks like "http://..." was split, reconstruct
+                    page_url = cell_value
+                    page_title = ""
+                elif len(parts) == 2:
+                    page_title = parts[0].strip()
+                    page_url = parts[1].strip()
+                else:
+                    page_title = cell_value
 
         page_audit = PageAudit(
             page_id=page_id,

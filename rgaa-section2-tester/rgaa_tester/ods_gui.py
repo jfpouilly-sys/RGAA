@@ -279,6 +279,25 @@ class ODSAuditFrame(ttk.Frame):
 
         self.log(f"✅ Fichier chargé: {len(self.audit_data.pages)} page(s) trouvée(s)")
 
+        # Check for duplicate URLs and warn
+        url_to_pages = {}
+        for page in self.audit_data.pages:
+            if page.url and page.url not in ["Absente", ""]:
+                if page.url in url_to_pages:
+                    url_to_pages[page.url].append(page.page_id)
+                else:
+                    url_to_pages[page.url] = [page.page_id]
+
+        for url, page_ids in url_to_pages.items():
+            if len(page_ids) > 1:
+                self.log(f"⚠️ ATTENTION: URL dupliquée - {url[:50]}... utilisée par: {', '.join(page_ids)}")
+
+        # Log each page's URL for verification
+        self.log("📋 URLs des pages:")
+        for page in self.audit_data.pages:
+            url_display = page.url[:60] + "..." if len(page.url) > 60 else page.url
+            self.log(f"   {page.page_id}: {url_display}")
+
     def _open_log_file(self):
         """Open the log file for auto-saving."""
         try:

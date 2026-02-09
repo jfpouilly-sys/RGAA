@@ -48,9 +48,16 @@ class ODSAuditAnalyzer:
         """
         page_data = self.handler.get_page_audit(page_id)
         if not page_data:
+            if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
+                self.crawler._callback_log(f"❌ Page {page_id} non trouvée dans les données")
             return None
 
         url = page_data.url
+
+        # Log diagnostic info for debugging
+        if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
+            self.crawler._callback_log(f"🔎 Page ID: {page_id} | Titre: {page_data.title}")
+            self.crawler._callback_log(f"🔗 URL à analyser: {url}")
 
         # Check if URL is valid
         if url in ["Absente", ""] or not url.startswith("http"):
