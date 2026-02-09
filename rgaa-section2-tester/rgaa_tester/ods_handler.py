@@ -275,14 +275,17 @@ class RGAAAuditODSHandler:
         """Load and parse an XLSX file."""
         self.workbook = load_workbook(self.filepath, data_only=True)
 
-        # Parse Échantillon sheet for metadata
-        self._parse_echantillon_sheet_xlsx()
+        # Parse Échantillon sheet for metadata AND page info
+        page_info_from_echantillon = self._parse_echantillon_sheet_xlsx()
 
         # Parse page audit sheets (P01-P20)
         for i in range(1, 21):
             page_id = f"P{i:02d}"
             try:
-                page_audit = self._parse_page_sheet_xlsx(page_id)
+                # Get title/URL from Échantillon sheet if available
+                echantillon_info = page_info_from_echantillon.get(page_id, {})
+
+                page_audit = self._parse_page_sheet_xlsx(page_id, echantillon_info)
                 if page_audit:
                     self.audit_data.pages.append(page_audit)
             except Exception as e:
@@ -305,38 +308,100 @@ class RGAAAuditODSHandler:
             return self.workbook[sheet_name]
         return None
 
-    def _parse_echantillon_sheet_xlsx(self):
-        """Parse the Échantillon (Sample) sheet for audit metadata from XLSX."""
+    def _parse_echantillon_sheet_xlsx(self) -> Dict[str, Dict]:
+        """
+        Parse the Échantillon (Sample) sheet for audit metadata and page info from XLSX.
+
+        Returns:
+            Dictionary mapping page_id to {'title': str, 'url': str}
+        """
+        page_info = {}
         sheet = self._get_xlsx_sheet("Échantillon")
         if not sheet:
-            return
+            return page_info
 
-        # Row 3: Date (cell B3)
-        cell_val = sheet.cell(row=3, column=2).value
-        if cell_val:
-            self.audit_data.date = str(cell_val)
+        # Try to find metadata in typical locations
+        # Check if we have a metadata section (rows 3-6 with labels in column A)
+        for row_num in range(1, min(10, sheet.max_row + 1)):
+            cell_a = str(sheet.cell(row=row_num, column=1).value or "").lower()
+            cell_b = sheet.cell(row=row_num, column=2).value
 
-        # Row 4: Auditeur (cell B4)
-        cell_val = sheet.cell(row=4, column=2).value
-        if cell_val:
-            self.audit_data.auditor = str(cell_val)
+            if "date" in cell_a and cell_b:
+                self.audit_data.date = str(cell_b)
+            elif "auditeur" in cell_a and cell_b:
+                self.audit_data.auditor = str(cell_b)
+            elif "contexte" in cell_a and cell_b:
+                self.audit_data.context = str(cell_b)
+            elif "site" in cell_a and cell_b:
+                self.audit_data.site_url = str(cell_b)
 
-        # Row 5: Contexte (cell B5)
-        cell_val = sheet.cell(row=5, column=2).value
-        if cell_val:
-            self.audit_data.context = str(cell_val)
+        # Find the page table by looking for header row with "N° page" or "page"
+        # or rows starting with P01, P02, etc.
+        header_row = None
+        page_id_col = None
+        title_col = None
+        url_col = None
 
-        # Row 6: Site (cell B6)
-        cell_val = sheet.cell(row=6, column=2).value
-        if cell_val:
-            self.audit_data.site_url = str(cell_val)
+        for row_num in range(1, min(30, sheet.max_row + 1)):
+            for col_num in range(1, min(10, sheet.max_column + 1)):
+                cell_val = str(sheet.cell(row=row_num, column=col_num).value or "").lower()
 
-    def _parse_page_sheet_xlsx(self, page_id: str) -> Optional[PageAudit]:
+                # Look for header indicators
+                if "n°" in cell_val or "page" in cell_val.replace(" ", ""):
+                    # Check if this looks like a header row
+                    next_col_val = str(sheet.cell(row=row_num, column=col_num + 1).value or "").lower()
+                    if "titre" in next_col_val or "page" in next_col_val:
+                        header_row = row_num
+                        page_id_col = col_num
+                        title_col = col_num + 1
+                        url_col = col_num + 2
+                        break
+
+                # Also check if row starts with P01
+                if cell_val == "p01":
+                    # This row has data, previous might be header
+                    header_row = row_num - 1 if row_num > 1 else row_num
+                    page_id_col = col_num
+                    title_col = col_num + 1
+                    url_col = col_num + 2
+                    break
+
+            if header_row:
+                break
+
+        # If we found the table structure, extract page info
+        if page_id_col and title_col and url_col:
+            start_row = header_row + 1 if header_row else 1
+
+            for row_num in range(start_row, sheet.max_row + 1):
+                page_id_val = str(sheet.cell(row=row_num, column=page_id_col).value or "").strip().upper()
+
+                # Check if this looks like a page ID (P01, P02, etc.)
+                if page_id_val.startswith("P") and len(page_id_val) >= 2:
+                    # Normalize to P01 format
+                    try:
+                        page_num = int(page_id_val[1:])
+                        page_id = f"P{page_num:02d}"
+
+                        title = str(sheet.cell(row=row_num, column=title_col).value or "").strip()
+                        url = str(sheet.cell(row=row_num, column=url_col).value or "").strip()
+
+                        page_info[page_id] = {
+                            'title': title,
+                            'url': url
+                        }
+                    except (ValueError, IndexError):
+                        continue
+
+        return page_info
+
+    def _parse_page_sheet_xlsx(self, page_id: str, echantillon_info: Dict = None) -> Optional[PageAudit]:
         """
         Parse a page audit sheet (P01-P20) from XLSX.
 
         Args:
             page_id: Page identifier (P01, P02, etc.)
+            echantillon_info: Optional dict with 'title' and 'url' from Échantillon sheet
 
         Returns:
             PageAudit object or None if sheet not found
@@ -345,35 +410,39 @@ class RGAAAuditODSHandler:
         if not sheet:
             return None
 
-        # Row 2: [Page Title] : [URL] or just [URL] (cell A2)
-        cell_value = sheet.cell(row=2, column=1).value
-        page_title = ""
-        page_url = ""
+        echantillon_info = echantillon_info or {}
 
-        if cell_value:
-            cell_value = str(cell_value).strip()
+        # Prefer title/URL from Échantillon sheet if available
+        page_title = echantillon_info.get('title', '')
+        page_url = echantillon_info.get('url', '')
 
-            # Check if the cell starts with a URL (http:// or https://)
-            if cell_value.startswith(('http://', 'https://')):
-                page_url = cell_value
-                page_title = ""
-            elif ' : http' in cell_value:
-                idx = cell_value.find(' : http')
-                if idx > 0:
-                    page_title = cell_value[:idx].strip()
-                    page_url = cell_value[idx + 3:].strip()
-                else:
-                    page_title = cell_value
-            else:
-                parts = cell_value.split(':', 1)
-                if len(parts) == 2 and parts[1].strip().startswith('//'):
+        # If not from Échantillon, try to get from Pxx sheet row 2
+        if not page_title and not page_url:
+            cell_value = sheet.cell(row=2, column=1).value
+            if cell_value:
+                cell_value = str(cell_value).strip()
+
+                # Check if the cell starts with a URL (http:// or https://)
+                if cell_value.startswith(('http://', 'https://')):
                     page_url = cell_value
                     page_title = ""
-                elif len(parts) == 2:
-                    page_title = parts[0].strip()
-                    page_url = parts[1].strip()
+                elif ' : http' in cell_value:
+                    idx = cell_value.find(' : http')
+                    if idx > 0:
+                        page_title = cell_value[:idx].strip()
+                        page_url = cell_value[idx + 3:].strip()
+                    else:
+                        page_title = cell_value
                 else:
-                    page_title = cell_value
+                    parts = cell_value.split(':', 1)
+                    if len(parts) == 2 and parts[1].strip().startswith('//'):
+                        page_url = cell_value
+                        page_title = ""
+                    elif len(parts) == 2:
+                        page_title = parts[0].strip()
+                        page_url = parts[1].strip()
+                    else:
+                        page_title = cell_value
 
         page_audit = PageAudit(
             page_id=page_id,
