@@ -34,6 +34,7 @@ class ODSAuditAnalyzer:
         self.analyseur = AnalyseurRGAA(config)
         self.crawler = Crawler(config)
         self.full_rgaa_mode = full_rgaa_mode
+        self.output_dir = "."  # Default output directory
 
     def analyze_page(self, page_id: str, run_automated_tests: bool = True) -> Optional[PageAudit]:
         """
@@ -77,7 +78,7 @@ class ODSAuditAnalyzer:
                     self.crawler._callback_log(f"   {criterion.criterion_id} | {desc} | ⊘ NA")
 
             # Save CSV for this page (use memory data since ODS not updated)
-            csv_path = self.save_page_csv(page_id, use_memory_data=True)
+            csv_path = self.save_page_csv(page_id, output_dir=self.output_dir, use_memory_data=True)
             if csv_path and hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
                 self.crawler._callback_log(f"💾 CSV sauvegardé: {csv_path}")
 
@@ -132,7 +133,7 @@ class ODSAuditAnalyzer:
         updated_page = self.handler.get_page_audit(page_id)
 
         # Save CSV file for this page (use memory data for correct results)
-        csv_path = self.save_page_csv(page_id, use_memory_data=True)
+        csv_path = self.save_page_csv(page_id, output_dir=self.output_dir, use_memory_data=True)
         if csv_path and hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
             self.crawler._callback_log(f"💾 CSV sauvegardé: {csv_path}")
 

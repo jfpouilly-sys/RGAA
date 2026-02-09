@@ -72,6 +72,24 @@ class ODSAuditFrame(ttk.Frame):
         ttk.Button(path_frame, text="Parcourir...", command=self.browse_file).pack(side="left", padx=2)
         ttk.Button(path_frame, text="Charger", command=self.load_file).pack(side="left", padx=2)
 
+        # Output directory section
+        output_frame = ttk.Frame(file_frame)
+        output_frame.pack(fill="x", pady=(10, 0))
+
+        ttk.Label(output_frame, text="📂 Répertoire de sortie (logs, CSV, stats):").pack(side="left")
+
+        output_path_frame = ttk.Frame(file_frame)
+        output_path_frame.pack(fill="x", pady=(5, 0))
+
+        self.output_dir_var = tk.StringVar()
+        self.output_dir_var.set("")  # Empty = use ODS directory
+        ttk.Entry(output_path_frame, textvariable=self.output_dir_var, width=60).pack(side="left", fill="x", expand=True, padx=(0, 5))
+        ttk.Button(output_path_frame, text="Parcourir...", command=self.browse_output_dir).pack(side="left", padx=2)
+        ttk.Button(output_path_frame, text="Réinitialiser", command=self._reset_output_dir).pack(side="left", padx=2)
+
+        # Help text
+        ttk.Label(file_frame, text="(Vide = même répertoire que le fichier ODS)", foreground="gray").pack(anchor="w", pady=(2, 0))
+
     def _create_info_section(self):
         """Create audit information section."""
         info_frame = ttk.LabelFrame(self, text="ℹ️ Informations de l'audit", padding=10)
@@ -232,6 +250,57 @@ class ODSAuditFrame(ttk.Frame):
         if filepath:
             self.file_path_var.set(filepath)
 
+    def browse_output_dir(self):
+        """Open directory browser to select output directory."""
+        import os
+        # Start from current output dir or ODS dir
+        initial_dir = self.output_dir_var.get()
+        if not initial_dir:
+            ods_path = self.file_path_var.get()
+            if ods_path:
+                initial_dir = os.path.dirname(ods_path)
+            else:
+                initial_dir = str(Path.home())
+
+        directory = filedialog.askdirectory(
+            title="Sélectionner le répertoire de sortie",
+            initialdir=initial_dir
+        )
+        if directory:
+            self.output_dir_var.set(directory)
+            self.log(f"📂 Répertoire de sortie: {directory}")
+
+    def _reset_output_dir(self):
+        """Reset output directory to use ODS file directory."""
+        self.output_dir_var.set("")
+        self.log("📂 Répertoire de sortie réinitialisé (utilise le répertoire du fichier ODS)")
+
+    def _get_output_dir(self) -> str:
+        """
+        Get the output directory for saving files.
+
+        Returns:
+            Output directory path (uses ODS directory if not specified)
+        """
+        import os
+        output_dir = self.output_dir_var.get().strip()
+        if output_dir:
+            # Create directory if it doesn't exist
+            if not os.path.exists(output_dir):
+                try:
+                    os.makedirs(output_dir, exist_ok=True)
+                except Exception as e:
+                    self.log(f"⚠️ Impossible de créer le répertoire: {e}")
+                    # Fall back to ODS directory
+                    output_dir = ""
+
+        if not output_dir:
+            # Use ODS file directory
+            ods_path = self.file_path_var.get()
+            output_dir = os.path.dirname(ods_path) if ods_path else "."
+
+        return output_dir or "."
+
     def load_file(self):
         """Load the ODS file and display audit information."""
         filepath = self.file_path_var.get()
@@ -263,6 +332,11 @@ class ODSAuditFrame(ttk.Frame):
         except Exception as e:
             self.after(0, lambda: self._load_file_error(str(e)))
 
+    def _update_analyzer_output_dir(self):
+        """Update the analyzer's output directory before analysis."""
+        if self.audit_analyzer:
+            self.audit_analyzer.output_dir = self._get_output_dir()
+
     def _load_file_complete(self):
         """Called when file loading completes successfully."""
         # Update info labels
@@ -278,6 +352,7 @@ class ODSAuditFrame(ttk.Frame):
         self.populate_pages_list()
 
         self.log(f"✅ Fichier chargé: {len(self.audit_data.pages)} page(s) trouvée(s)")
+        self.log(f"📂 Répertoire de sortie: {self._get_output_dir()}")
 
         # Check for duplicate URLs and warn
         url_to_pages = {}
@@ -305,12 +380,10 @@ class ODSAuditFrame(ttk.Frame):
             if self._log_file:
                 self._log_file.close()
 
-            # Create log file path next to the ODS file
+            # Create log file path in output directory
             import os
-            ods_dir = os.path.dirname(self.file_path_var.get())
-            if not ods_dir:
-                ods_dir = "."
-            self._log_file_path = os.path.join(ods_dir, "audit_journal.log")
+            output_dir = self._get_output_dir()
+            self._log_file_path = os.path.join(output_dir, "audit_journal.log")
 
             # Open in append mode
             self._log_file = open(self._log_file_path, 'a', encoding='utf-8')
@@ -320,6 +393,7 @@ class ODSAuditFrame(ttk.Frame):
             self._log_file.write(f"\n{'=' * 60}\n")
             self._log_file.write(f"Session: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n")
             self._log_file.write(f"Fichier: {self.file_path_var.get()}\n")
+            self._log_file.write(f"Répertoire de sortie: {output_dir}\n")
             self._log_file.write(f"{'=' * 60}\n")
             self._log_file.flush()
         except Exception:
@@ -338,8 +412,8 @@ class ODSAuditFrame(ttk.Frame):
         import os
         from datetime import datetime
 
-        ods_dir = os.path.dirname(self.file_path_var.get()) or "."
-        log_path = os.path.join(ods_dir, f"{page_id}.log")
+        output_dir = self._get_output_dir()
+        log_path = os.path.join(output_dir, f"{page_id}.log")
 
         try:
             page_file = open(log_path, 'w', encoding='utf-8')
@@ -436,6 +510,9 @@ class ODSAuditFrame(ttk.Frame):
 
     def _analyze_page_thread(self, page_id: str):
         """Analyze a page in a separate thread."""
+        # Update output directory for CSV files
+        self._update_analyzer_output_dir()
+
         # Create per-page logger
         page_logger, page_log_file = self._make_page_logger(page_id)
 
@@ -525,11 +602,16 @@ class ODSAuditFrame(ttk.Frame):
             parallel_enabled = self.parallel_enabled.get()
             num_workers = self.parallel_workers.get()
 
+            # Update output directory for CSV files
+            self._update_analyzer_output_dir()
+            output_dir = self._get_output_dir()
+
             self.log("=" * 50)
             if parallel_enabled:
                 self.log(f"Début de l'analyse parallèle ({num_workers} threads)...")
             else:
                 self.log("Début de l'analyse séquentielle...")
+            self.log(f"📂 Répertoire de sortie: {output_dir}")
             self.log("=" * 50)
 
             # Set up crawler logging callback
@@ -647,6 +729,7 @@ class ODSAuditFrame(ttk.Frame):
                 thread_analyzer.crawler.definir_callback_log(page_logger)
                 thread_analyzer.full_rgaa_mode = True
                 thread_analyzer.analyseur = None
+                thread_analyzer.output_dir = self._get_output_dir()
 
                 # Analyze the page
                 thread_analyzer.analyze_page(page_id, run_automated_tests=True)
