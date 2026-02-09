@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-ODS File Handler for RGAA Audit Analysis.
+Audit File Handler for RGAA Audit Analysis.
 
-Handles reading and writing grilleAudit.ods format files.
+Handles reading and writing grilleAudit files in ODS or XLSX format.
 """
 
 import os
@@ -10,9 +10,19 @@ import shutil
 import threading
 from datetime import datetime
 from typing import List, Dict, Optional
-from odf.opendocument import load, OpenDocumentSpreadsheet
+
+# ODS support
+from odf.opendocument import load as odf_load, OpenDocumentSpreadsheet
 from odf.table import Table, TableRow, TableCell
 from odf.text import P
+
+# XLSX support
+try:
+    from openpyxl import load_workbook, Workbook
+    from openpyxl.worksheet.worksheet import Worksheet
+    XLSX_SUPPORT = True
+except ImportError:
+    XLSX_SUPPORT = False
 
 from .ods_models import (
     Status,
@@ -188,24 +198,33 @@ def get_cell_at_column(row: TableRow, column_index: int) -> Optional[TableCell]:
 
 
 class RGAAAuditODSHandler:
-    """Handler for reading and writing RGAA audit .ods files."""
+    """Handler for reading and writing RGAA audit files (.ods or .xlsx)."""
 
     def __init__(self, filepath: str):
         """
-        Initialize the ODS handler.
+        Initialize the audit file handler.
 
         Args:
-            filepath: Path to the .ods file
+            filepath: Path to the .ods or .xlsx file
         """
         self.filepath = filepath
-        self.doc = None
+        self.doc = None  # ODS document
+        self.workbook = None  # XLSX workbook
         self.audit_data = None
         self._sheets_cache = {}
         self._lock = threading.RLock()  # Reentrant lock for thread-safe operations
 
+        # Detect file type
+        ext = os.path.splitext(filepath)[1].lower()
+        self.is_xlsx = ext in ['.xlsx', '.xlsm', '.xls']
+        self.is_ods = ext == '.ods'
+
+        if self.is_xlsx and not XLSX_SUPPORT:
+            raise ImportError("openpyxl is required for XLSX support. Install it with: pip install openpyxl")
+
     def load(self) -> AuditFile:
         """
-        Load and parse the .ods audit file.
+        Load and parse the audit file (.ods or .xlsx).
 
         Returns:
             AuditFile object with parsed data
@@ -213,21 +232,12 @@ class RGAAAuditODSHandler:
         if not os.path.exists(self.filepath):
             raise FileNotFoundError(f"File not found: {self.filepath}")
 
-        self.doc = load(self.filepath)
         self.audit_data = AuditFile()
 
-        # Parse Échantillon sheet for metadata
-        self._parse_echantillon_sheet()
-
-        # Parse page audit sheets (P01-P20)
-        for i in range(1, 21):
-            page_id = f"P{i:02d}"
-            try:
-                page_audit = self._parse_page_sheet(page_id)
-                if page_audit:
-                    self.audit_data.pages.append(page_audit)
-            except Exception as e:
-                print(f"Warning: Could not parse sheet {page_id}: {e}")
+        if self.is_xlsx:
+            self._load_xlsx()
+        else:
+            self._load_ods()
 
         # Check for duplicate URLs
         url_to_pages = {}
@@ -243,6 +253,172 @@ class RGAAAuditODSHandler:
                 print(f"⚠️ ATTENTION: URL dupliquée - {url} utilisée par: {', '.join(page_ids)}")
 
         return self.audit_data
+
+    def _load_ods(self):
+        """Load and parse an ODS file."""
+        self.doc = odf_load(self.filepath)
+
+        # Parse Échantillon sheet for metadata
+        self._parse_echantillon_sheet()
+
+        # Parse page audit sheets (P01-P20)
+        for i in range(1, 21):
+            page_id = f"P{i:02d}"
+            try:
+                page_audit = self._parse_page_sheet(page_id)
+                if page_audit:
+                    self.audit_data.pages.append(page_audit)
+            except Exception as e:
+                print(f"Warning: Could not parse sheet {page_id}: {e}")
+
+    def _load_xlsx(self):
+        """Load and parse an XLSX file."""
+        self.workbook = load_workbook(self.filepath, data_only=True)
+
+        # Parse Échantillon sheet for metadata
+        self._parse_echantillon_sheet_xlsx()
+
+        # Parse page audit sheets (P01-P20)
+        for i in range(1, 21):
+            page_id = f"P{i:02d}"
+            try:
+                page_audit = self._parse_page_sheet_xlsx(page_id)
+                if page_audit:
+                    self.audit_data.pages.append(page_audit)
+            except Exception as e:
+                print(f"Warning: Could not parse sheet {page_id}: {e}")
+
+    def _get_xlsx_sheet(self, sheet_name: str) -> Optional[Worksheet]:
+        """
+        Get an XLSX sheet by name.
+
+        Args:
+            sheet_name: Name of the sheet
+
+        Returns:
+            Worksheet object or None if not found
+        """
+        if not self.workbook:
+            return None
+
+        if sheet_name in self.workbook.sheetnames:
+            return self.workbook[sheet_name]
+        return None
+
+    def _parse_echantillon_sheet_xlsx(self):
+        """Parse the Échantillon (Sample) sheet for audit metadata from XLSX."""
+        sheet = self._get_xlsx_sheet("Échantillon")
+        if not sheet:
+            return
+
+        # Row 3: Date (cell B3)
+        cell_val = sheet.cell(row=3, column=2).value
+        if cell_val:
+            self.audit_data.date = str(cell_val)
+
+        # Row 4: Auditeur (cell B4)
+        cell_val = sheet.cell(row=4, column=2).value
+        if cell_val:
+            self.audit_data.auditor = str(cell_val)
+
+        # Row 5: Contexte (cell B5)
+        cell_val = sheet.cell(row=5, column=2).value
+        if cell_val:
+            self.audit_data.context = str(cell_val)
+
+        # Row 6: Site (cell B6)
+        cell_val = sheet.cell(row=6, column=2).value
+        if cell_val:
+            self.audit_data.site_url = str(cell_val)
+
+    def _parse_page_sheet_xlsx(self, page_id: str) -> Optional[PageAudit]:
+        """
+        Parse a page audit sheet (P01-P20) from XLSX.
+
+        Args:
+            page_id: Page identifier (P01, P02, etc.)
+
+        Returns:
+            PageAudit object or None if sheet not found
+        """
+        sheet = self._get_xlsx_sheet(page_id)
+        if not sheet:
+            return None
+
+        # Row 2: [Page Title] : [URL] or just [URL] (cell A2)
+        cell_value = sheet.cell(row=2, column=1).value
+        page_title = ""
+        page_url = ""
+
+        if cell_value:
+            cell_value = str(cell_value).strip()
+
+            # Check if the cell starts with a URL (http:// or https://)
+            if cell_value.startswith(('http://', 'https://')):
+                page_url = cell_value
+                page_title = ""
+            elif ' : http' in cell_value:
+                idx = cell_value.find(' : http')
+                if idx > 0:
+                    page_title = cell_value[:idx].strip()
+                    page_url = cell_value[idx + 3:].strip()
+                else:
+                    page_title = cell_value
+            else:
+                parts = cell_value.split(':', 1)
+                if len(parts) == 2 and parts[1].strip().startswith('//'):
+                    page_url = cell_value
+                    page_title = ""
+                elif len(parts) == 2:
+                    page_title = parts[0].strip()
+                    page_url = parts[1].strip()
+                else:
+                    page_title = cell_value
+
+        page_audit = PageAudit(
+            page_id=page_id,
+            title=page_title,
+            url=page_url
+        )
+
+        # Parse criterion rows (starting from row 4)
+        for row_num in range(4, sheet.max_row + 1):
+            # Column A: Thématique
+            # Column B: Critère
+            # Column C: Recommandation
+            # Column D: Statut
+            # Column E: Dérogation
+            # Column F: Modifications
+            # Column G: Commentaires
+            # Column H: Date de modification
+
+            theme = str(sheet.cell(row=row_num, column=1).value or "")
+            criterion_id = str(sheet.cell(row=row_num, column=2).value or "")
+            description = str(sheet.cell(row=row_num, column=3).value or "")
+            status_str = str(sheet.cell(row=row_num, column=4).value or "NT")
+            derogation_str = str(sheet.cell(row=row_num, column=5).value or "N")
+            modifications = str(sheet.cell(row=row_num, column=6).value or "")
+            comments = str(sheet.cell(row=row_num, column=7).value or "")
+            modification_date = str(sheet.cell(row=row_num, column=8).value or "")
+
+            # Skip if no criterion ID
+            if not criterion_id or not criterion_id[0].isdigit():
+                continue
+
+            criterion = AuditCriterion(
+                theme=theme,
+                criterion_id=criterion_id,
+                description=description,
+                status=Status.from_string(status_str),
+                derogation=Derogation.from_string(derogation_str),
+                modifications=modifications,
+                comments=comments,
+                modification_date=modification_date
+            )
+
+            page_audit.criteria.append(criterion)
+
+        return page_audit
 
     def _get_sheet_by_name(self, sheet_name: str) -> Optional[Table]:
         """
@@ -454,54 +630,95 @@ class RGAAAuditODSHandler:
             if page:
                 page.update_criterion(criterion_id, status, derogation, modifications, comments, timestamp)
 
-            # Update in ODS file
-            sheet = self._get_sheet_by_name(page_id)
-            if not sheet:
-                return
+            # Update in file based on type
+            if self.is_xlsx:
+                self._update_criterion_xlsx(page_id, criterion_id, status, derogation, modifications, comments, timestamp)
+            else:
+                self._update_criterion_ods(page_id, criterion_id, status, derogation, modifications, comments, timestamp)
 
-            rows = sheet.getElementsByType(TableRow)
+    def _update_criterion_ods(self, page_id: str, criterion_id: str,
+                              status: Status, derogation: Derogation,
+                              modifications: str, comments: str, timestamp: str):
+        """Update criterion in ODS file."""
+        sheet = self._get_sheet_by_name(page_id)
+        if not sheet:
+            return
 
-            # Find the row for this criterion (starting from row 4, index 3)
-            for i in range(3, len(rows)):
-                row = rows[i]
+        rows = sheet.getElementsByType(TableRow)
 
-                # Get criterion ID from column B (index 1) using expand_row (read-only)
-                row_values = expand_row(row)
-                if len(row_values) < 2:
-                    continue
+        # Find the row for this criterion (starting from row 4, index 3)
+        for i in range(3, len(rows)):
+            row = rows[i]
 
-                row_criterion_id = row_values[1] if len(row_values) > 1 else ""
-                if row_criterion_id != criterion_id:
-                    continue
+            # Get criterion ID from column B (index 1) using expand_row (read-only)
+            row_values = expand_row(row)
+            if len(row_values) < 2:
+                continue
 
-                # Found the row - now expand cells and update values
-                # First, expand all cells to individual cells
-                self._expand_row_cells(row, 8)
+            row_criterion_id = row_values[1] if len(row_values) > 1 else ""
+            if row_criterion_id != criterion_id:
+                continue
 
-                # Get all cells as a fresh list after expansion
-                cells = list(row.getElementsByType(TableCell))
+            # Found the row - now expand cells and update values
+            # First, expand all cells to individual cells
+            self._expand_row_cells(row, 8)
 
-                # Column D (Status) - index 3
-                if len(cells) > 3:
-                    set_cell_value(cells[3], status.value)
+            # Get all cells as a fresh list after expansion
+            cells = list(row.getElementsByType(TableCell))
 
-                # Column E (Derogation) - index 4
-                if len(cells) > 4:
-                    set_cell_value(cells[4], derogation.value)
+            # Column D (Status) - index 3
+            if len(cells) > 3:
+                set_cell_value(cells[3], status.value)
 
-                # Column F (Modifications) - index 5
-                if len(cells) > 5:
-                    set_cell_value(cells[5], modifications)
+            # Column E (Derogation) - index 4
+            if len(cells) > 4:
+                set_cell_value(cells[4], derogation.value)
 
-                # Column G (Comments) - index 6
-                if len(cells) > 6:
-                    set_cell_value(cells[6], comments)
+            # Column F (Modifications) - index 5
+            if len(cells) > 5:
+                set_cell_value(cells[5], modifications)
 
-                # Column H (Modification Date) - index 7
-                if len(cells) > 7:
-                    set_cell_value(cells[7], timestamp)
+            # Column G (Comments) - index 6
+            if len(cells) > 6:
+                set_cell_value(cells[6], comments)
 
-                break
+            # Column H (Modification Date) - index 7
+            if len(cells) > 7:
+                set_cell_value(cells[7], timestamp)
+
+            break
+
+    def _update_criterion_xlsx(self, page_id: str, criterion_id: str,
+                               status: Status, derogation: Derogation,
+                               modifications: str, comments: str, timestamp: str):
+        """Update criterion in XLSX file."""
+        sheet = self._get_xlsx_sheet(page_id)
+        if not sheet:
+            return
+
+        # Find the row for this criterion (starting from row 4)
+        for row_num in range(4, sheet.max_row + 1):
+            row_criterion_id = str(sheet.cell(row=row_num, column=2).value or "")
+            if row_criterion_id != criterion_id:
+                continue
+
+            # Found the row - update values
+            # Column D (Status)
+            sheet.cell(row=row_num, column=4).value = status.value
+
+            # Column E (Derogation)
+            sheet.cell(row=row_num, column=5).value = derogation.value
+
+            # Column F (Modifications)
+            sheet.cell(row=row_num, column=6).value = modifications
+
+            # Column G (Comments)
+            sheet.cell(row=row_num, column=7).value = comments
+
+            # Column H (Modification Date)
+            sheet.cell(row=row_num, column=8).value = timestamp
+
+            break
 
     def _expand_row_cells(self, row: TableRow, min_columns: int):
         """
@@ -559,7 +776,7 @@ class RGAAAuditODSHandler:
 
     def save(self, output_path: Optional[str] = None):
         """
-        Save the modified .ods file.
+        Save the modified audit file (.ods or .xlsx).
 
         Thread-safe: uses lock for concurrent access.
 
@@ -567,9 +784,6 @@ class RGAAAuditODSHandler:
             output_path: Output file path (defaults to original path)
         """
         with self._lock:
-            if not self.doc:
-                raise ValueError("No document loaded")
-
             output_path = output_path or self.filepath
 
             # Create backup if overwriting original
@@ -577,8 +791,14 @@ class RGAAAuditODSHandler:
                 backup_path = self.filepath + ".backup"
                 shutil.copy2(self.filepath, backup_path)
 
-            # Save the document
-            self.doc.save(output_path)
+            if self.is_xlsx:
+                if not self.workbook:
+                    raise ValueError("No XLSX workbook loaded")
+                self.workbook.save(output_path)
+            else:
+                if not self.doc:
+                    raise ValueError("No ODS document loaded")
+                self.doc.save(output_path)
 
     def calculate_synthesis(self) -> Dict:
         """

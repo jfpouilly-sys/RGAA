@@ -13,9 +13,10 @@ Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/)
 - Détection automatique des critères NA (Non Applicable) basée sur le contenu de la page
 - `ContentDetector` pour analyser la présence d'éléments (images, formulaires, tableaux, etc.)
 
-#### Interface graphique ODS
-- Nouvelle interface pour travailler avec les fichiers `grilleAudit.ods`
-- Chargement et parsing des fichiers ODS avec odfpy
+#### Interface graphique ODS/XLSX
+- Nouvelle interface pour travailler avec les fichiers `grilleAudit.ods` ou `.xlsx`
+- Support des fichiers ODS (LibreOffice) avec odfpy
+- Support des fichiers XLSX (Excel) avec openpyxl
 - Affichage des informations d'audit (date, auditeur, contexte, site)
 - Liste des pages à auditer avec statut visuel (bleu = testé)
 - Boutons d'action : analyser page sélectionnée, analyser toutes les pages

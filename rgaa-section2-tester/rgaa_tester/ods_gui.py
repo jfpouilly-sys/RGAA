@@ -59,7 +59,7 @@ class ODSAuditFrame(ttk.Frame):
 
     def _create_file_section(self):
         """Create file selection section."""
-        file_frame = ttk.LabelFrame(self, text="📁 Fichier d'audit ODS", padding=10)
+        file_frame = ttk.LabelFrame(self, text="📁 Fichier d'audit (ODS / XLSX)", padding=10)
         file_frame.pack(fill="x", padx=10, pady=5)
 
         # File path entry
@@ -238,11 +238,13 @@ class ODSAuditFrame(ttk.Frame):
         self.log_text.pack(fill="both", expand=True)
 
     def browse_file(self):
-        """Open file browser to select ODS file."""
+        """Open file browser to select audit file (ODS or XLSX)."""
         filepath = filedialog.askopenfilename(
             title="Sélectionner le fichier d'audit RGAA",
             filetypes=[
+                ("Fichiers d'audit", "*.ods *.xlsx *.xlsm"),
                 ("OpenDocument Spreadsheet", "*.ods"),
+                ("Excel Workbook", "*.xlsx *.xlsm"),
                 ("All files", "*.*")
             ],
             initialdir=str(Path.home())
