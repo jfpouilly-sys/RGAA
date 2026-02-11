@@ -3,31 +3,38 @@
 ODS Audit Analyzer - Integrates ODS handler with automated testing.
 
 Connects the ODS file format with our automated accessibility tests.
+Supports full RGAA 4.1.2 testing with all 106 criteria.
 """
 
+import csv
+import os
 from typing import Dict, List, Optional
 from .ods_handler import RGAAAuditODSHandler
 from .ods_models import Status, Derogation, PageAudit, AuditCriterion
 from .analyzer import AnalyseurRGAA, ResultatTest
 from .crawler import Crawler
 from .config import get_config
+from .full_rgaa_tester import FullRGAATester, WebPageAnalyzer, TestResult
 
 
 class ODSAuditAnalyzer:
     """Integrates ODS handler with automated testing."""
 
-    def __init__(self, ods_handler: RGAAAuditODSHandler, config=None):
+    def __init__(self, ods_handler: RGAAAuditODSHandler, config=None, full_rgaa_mode: bool = True):
         """
         Initialize the ODS analyzer.
 
         Args:
             ods_handler: RGAAAuditODSHandler instance
             config: Configuration object (optional)
+            full_rgaa_mode: If True, run all 106 RGAA criteria (default). If False, only Section 2.
         """
         self.handler = ods_handler
         self.config = config or get_config()
         self.analyseur = AnalyseurRGAA(config)
         self.crawler = Crawler(config)
+        self.full_rgaa_mode = full_rgaa_mode
+        self.output_dir = "."  # Default output directory
 
     def analyze_page(self, page_id: str, run_automated_tests: bool = True) -> Optional[PageAudit]:
         """
@@ -42,20 +49,39 @@ class ODSAuditAnalyzer:
         """
         page_data = self.handler.get_page_audit(page_id)
         if not page_data:
+            if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
+                self.crawler._callback_log(f"❌ Page {page_id} non trouvée dans les données")
             return None
 
         url = page_data.url
 
+        # Log diagnostic info for debugging
+        if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
+            self.crawler._callback_log(f"🔎 Page ID: {page_id} | Titre: {page_data.title}")
+            self.crawler._callback_log(f"🔗 URL à analyser: {url}")
+
         # Check if URL is valid
         if url in ["Absente", ""] or not url.startswith("http"):
-            # Mark all criteria as NA for absent pages
+            # Log that page is absent
+            if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
+                self.crawler._callback_log(f"⊘ Page {page_id} absente ou URL invalide - tous les critères marqués NA")
+                self.crawler._callback_log(f"   Critère | Description | Statut")
+                self.crawler._callback_log(f"   " + "-" * 60)
+
+            # Mark all criteria as NA in memory (fast)
             for criterion in page_data.criteria:
                 criterion.status = Status.NOT_APPLICABLE
-                self.handler.update_criterion(
-                    page_id=page_id,
-                    criterion_id=criterion.criterion_id,
-                    status=Status.NOT_APPLICABLE
-                )
+                criterion.modifications = "Page absente ou URL invalide"
+                # Log each criterion
+                if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
+                    desc = criterion.description[:50] + "..." if len(criterion.description) > 50 else criterion.description
+                    self.crawler._callback_log(f"   {criterion.criterion_id} | {desc} | ⊘ NA")
+
+            # Save CSV for this page (use memory data since ODS not updated)
+            csv_path = self.save_page_csv(page_id, output_dir=self.output_dir, use_memory_data=True)
+            if csv_path and hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
+                self.crawler._callback_log(f"💾 CSV sauvegardé: {csv_path}")
+
             return page_data
 
         if not run_automated_tests:
@@ -64,15 +90,36 @@ class ODSAuditAnalyzer:
         # Run automated tests
         results = self.run_automated_tests(url)
 
+        # Helper to get status symbol
+        def status_symbol(status):
+            symbols = {
+                Status.COMPLIANT: "✓ C",
+                Status.NON_COMPLIANT: "✗ NC",
+                Status.NOT_APPLICABLE: "⊘ NA",
+                Status.NOT_TESTED: "? NT"
+            }
+            return symbols.get(status, "? NT")
+
+        # Log header for criteria list
+        if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
+            self.crawler._callback_log(f"   Critère | Description | Statut")
+            self.crawler._callback_log(f"   " + "-" * 60)
+
         # Update criteria based on test results, but skip NA criteria
         for criterion_id, result in results.items():
-            # Check if criterion is already marked as NA
+            # Get criterion info for logging
             criterion = page_data.get_criterion(criterion_id)
+            description = criterion.description[:50] + "..." if criterion and len(criterion.description) > 50 else (criterion.description if criterion else "")
+
             if criterion and criterion.status == Status.NOT_APPLICABLE:
                 # Skip updating NA criteria - they remain NA
                 if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
-                    self.crawler._callback_log(f"⊘ Critère {criterion_id} marqué NA - test ignoré")
+                    self.crawler._callback_log(f"   {criterion_id} | {description} | {status_symbol(Status.NOT_APPLICABLE)} (pré-marqué)")
                 continue
+
+            # Log criterion being tested with result
+            if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
+                self.crawler._callback_log(f"   {criterion_id} | {description} | {status_symbol(result['status'])}")
 
             self.handler.update_criterion(
                 page_id=page_id,
@@ -83,13 +130,21 @@ class ODSAuditAnalyzer:
             )
 
         # Reload updated page data
-        return self.handler.get_page_audit(page_id)
+        updated_page = self.handler.get_page_audit(page_id)
+
+        # Save CSV file for this page (use memory data for correct results)
+        csv_path = self.save_page_csv(page_id, output_dir=self.output_dir, use_memory_data=True)
+        if csv_path and hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
+            self.crawler._callback_log(f"💾 CSV sauvegardé: {csv_path}")
+
+        return updated_page
 
     def run_automated_tests(self, url: str) -> Dict:
         """
         Execute automated tests and return results.
 
-        Currently supports Section 2 (CADRES) tests.
+        Supports full RGAA 4.1.2 testing (all 106 criteria) when full_rgaa_mode is True,
+        or Section 2 (CADRES) only when False.
 
         Args:
             url: URL to test
@@ -99,7 +154,6 @@ class ODSAuditAnalyzer:
         """
         results = {}
 
-        # Test Section 2: CADRES (Frames)
         try:
             # Fetch the page HTML first
             if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
@@ -113,64 +167,15 @@ class ODSAuditAnalyzer:
             if page.erreur:
                 raise Exception(f"Erreur lors de la récupération: {page.erreur}")
 
-            # Analyze the page with HTML and URL
+            # Log page fetch success
             if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
                 self.crawler._callback_log(f"🔍 Analyse du HTML ({len(page.html)} caractères)...")
 
-            resultat_page = self.analyseur.analyser_page(page.html, page.url)
-
-            # Test criterion 2.1 (Frame titles present)
-            if resultat_page.cadres_testes > 0:
-                if resultat_page.non_conformes_2_1 == 0:
-                    results["2.1"] = {
-                        'status': Status.COMPLIANT,
-                        'modifications': '',
-                        'comments': f'Tous les {resultat_page.cadres_testes} cadres ont un titre.'
-                    }
-                else:
-                    results["2.1"] = {
-                        'status': Status.NON_COMPLIANT,
-                        'modifications': f'{resultat_page.non_conformes_2_1} cadre(s) sans titre détecté(s). Ajouter un attribut title descriptif.',
-                        'comments': f'{resultat_page.non_conformes_2_1}/{resultat_page.cadres_testes} cadres non conformes.'
-                    }
+            # Run full RGAA tests if enabled
+            if self.full_rgaa_mode:
+                results = self._run_full_rgaa_tests(page.html, page.url)
             else:
-                results["2.1"] = {
-                    'status': Status.NOT_APPLICABLE,
-                    'modifications': '',
-                    'comments': 'Aucun cadre détecté sur cette page.'
-                }
-
-            # Test criterion 2.2 (Frame titles relevant)
-            if resultat_page.cadres_testes > 0:
-                # 2.2 requires manual verification
-                alertes_count = resultat_page.a_verifier_2_2
-                if alertes_count > 0:
-                    results["2.2"] = {
-                        'status': Status.NOT_TESTED,
-                        'modifications': '',
-                        'comments': f'⚠️ {alertes_count} cadre(s) signalé(s) pour vérification manuelle. La pertinence des titres doit être validée par un auditeur humain.'
-                    }
-                else:
-                    results["2.2"] = {
-                        'status': Status.NOT_TESTED,
-                        'modifications': '',
-                        'comments': f'Vérification manuelle requise pour {resultat_page.cadres_testes} cadre(s). Aucun titre suspect détecté automatiquement.'
-                    }
-            else:
-                results["2.2"] = {
-                    'status': Status.NOT_APPLICABLE,
-                    'modifications': '',
-                    'comments': 'Aucun cadre détecté sur cette page.'
-                }
-
-            # Log analysis results
-            if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
-                frames_info = f"{resultat_page.cadres_testes} cadre(s) détecté(s)"
-                if resultat_page.cadres_testes > 0:
-                    conf_info = f", {resultat_page.cadres_testes - resultat_page.non_conformes_2_1} conforme(s)"
-                    self.crawler._callback_log(f"✓ Analyse terminée: {frames_info}{conf_info}")
-                else:
-                    self.crawler._callback_log(f"✓ Analyse terminée: {frames_info}")
+                results = self._run_section2_tests(page.html, page.url)
 
         except Exception as e:
             # Log the error
@@ -178,33 +183,197 @@ class ODSAuditAnalyzer:
                 self.crawler._callback_log(f"❌ Erreur: {str(e)}")
 
             # Mark as not tested if error occurs
-            results["2.1"] = {
+            error_result = {
                 'status': Status.NOT_TESTED,
                 'modifications': '',
                 'comments': f'Erreur lors du test automatique: {str(e)}'
             }
-            results["2.2"] = {
-                'status': Status.NOT_TESTED,
-                'modifications': '',
-                'comments': f'Erreur lors du test automatique: {str(e)}'
-            }
+
+            if self.full_rgaa_mode:
+                # Mark all 106 criteria as not tested
+                for theme_criteria in [
+                    ["1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9"],
+                    ["2.1", "2.2"],
+                    ["3.1", "3.2", "3.3"],
+                    ["4.1", "4.2", "4.3", "4.4", "4.5", "4.6", "4.7", "4.8", "4.9", "4.10", "4.11", "4.12", "4.13"],
+                    ["5.1", "5.2", "5.3", "5.4", "5.5", "5.6", "5.7", "5.8"],
+                    ["6.1", "6.2"],
+                    ["7.1", "7.2", "7.3", "7.4", "7.5"],
+                    ["8.1", "8.2", "8.3", "8.4", "8.5", "8.6", "8.7", "8.8", "8.9", "8.10"],
+                    ["9.1", "9.2", "9.3", "9.4"],
+                    ["10.1", "10.2", "10.3", "10.4", "10.5", "10.6", "10.7", "10.8", "10.9", "10.10", "10.11", "10.12", "10.13", "10.14"],
+                    ["11.1", "11.2", "11.3", "11.4", "11.5", "11.6", "11.7", "11.8", "11.9", "11.10", "11.11", "11.12", "11.13"],
+                    ["12.1", "12.2", "12.3", "12.4", "12.5", "12.6", "12.7", "12.8", "12.9", "12.10", "12.11"],
+                    ["13.1", "13.2", "13.3", "13.4", "13.5", "13.6", "13.7", "13.8", "13.9", "13.10", "13.11", "13.12"]
+                ]:
+                    for crit in theme_criteria:
+                        results[crit] = error_result.copy()
+            else:
+                results["2.1"] = error_result.copy()
+                results["2.2"] = error_result.copy()
+
             # Re-raise to let caller handle it
             raise
 
         return results
 
-    def analyze_all_pages(self, progress_callback=None) -> Dict:
+    def _run_full_rgaa_tests(self, html: str, url: str) -> Dict:
+        """
+        Run all 106 RGAA criteria tests.
+
+        Args:
+            html: HTML content of the page
+            url: URL of the page
+
+        Returns:
+            Dictionary with test results per criterion
+        """
+        results = {}
+
+        # Create web page analyzer with pre-fetched HTML
+        analyzer = WebPageAnalyzer(url, html)
+        analyzer.fetch()  # This will use the provided HTML
+
+        # Create full RGAA tester
+        tester = FullRGAATester(analyzer)
+
+        # Run all tests
+        test_results = tester.run_all_tests()
+
+        # Convert TestResult objects to dictionaries compatible with ODS handler
+        for criterion_id, result in test_results.items():
+            # Build modifications text for column F
+            # For NT/NC status, include the reason/recommendation
+            modifications_text = result.modifications
+
+            # If modifications is empty but we have issues or manual_check, use those
+            if not modifications_text:
+                if result.issues:
+                    # Join issues into modifications text
+                    modifications_text = "; ".join(result.issues[:5])
+                elif result.manual_check:
+                    # Use manual_check as the reason for NT status
+                    modifications_text = result.manual_check
+
+            # For NT status, prefix with indication that manual verification is needed
+            if result.status == Status.NOT_TESTED and modifications_text:
+                if not modifications_text.startswith("VÉRIFICATION"):
+                    modifications_text = f"À VÉRIFIER: {modifications_text}"
+
+            results[criterion_id] = {
+                'status': result.status,
+                'modifications': modifications_text,
+                'comments': result.comments or result.manual_check
+            }
+
+        # Log summary
+        if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
+            summary = tester.get_summary(test_results)
+            auto_na = summary.get('auto_detected_na', 0)
+            self.crawler._callback_log(
+                f"✓ Analyse complète: {summary['conforme']}C/{summary['non_conforme']}NC/"
+                f"{summary['non_applicable']}NA/{summary['non_teste']}NT "
+                f"({summary['compliance_rate']}% conformité)"
+            )
+            if auto_na > 0:
+                self.crawler._callback_log(
+                    f"  ↳ {auto_na} critères NA auto-détectés (éléments absents de la page)"
+                )
+
+        return results
+
+    def _run_section2_tests(self, html: str, url: str) -> Dict:
+        """
+        Run Section 2 (CADRES) tests only (legacy mode).
+
+        Args:
+            html: HTML content of the page
+            url: URL of the page
+
+        Returns:
+            Dictionary with test results for criteria 2.1 and 2.2
+        """
+        results = {}
+
+        resultat_page = self.analyseur.analyser_page(html, url)
+
+        # Test criterion 2.1 (Frame titles present)
+        if resultat_page.cadres_testes > 0:
+            if resultat_page.non_conformes_2_1 == 0:
+                results["2.1"] = {
+                    'status': Status.COMPLIANT,
+                    'modifications': '',
+                    'comments': f'Tous les {resultat_page.cadres_testes} cadres ont un titre.'
+                }
+            else:
+                results["2.1"] = {
+                    'status': Status.NON_COMPLIANT,
+                    'modifications': f'{resultat_page.non_conformes_2_1} cadre(s) sans titre détecté(s). Ajouter un attribut title descriptif.',
+                    'comments': f'{resultat_page.non_conformes_2_1}/{resultat_page.cadres_testes} cadres non conformes.'
+                }
+        else:
+            results["2.1"] = {
+                'status': Status.NOT_APPLICABLE,
+                'modifications': '',
+                'comments': 'Aucun cadre détecté sur cette page.'
+            }
+
+        # Test criterion 2.2 (Frame titles relevant)
+        if resultat_page.cadres_testes > 0:
+            alertes_count = resultat_page.a_verifier_2_2
+            if alertes_count > 0:
+                results["2.2"] = {
+                    'status': Status.NOT_TESTED,
+                    'modifications': '',
+                    'comments': f'⚠️ {alertes_count} cadre(s) signalé(s) pour vérification manuelle. La pertinence des titres doit être validée par un auditeur humain.'
+                }
+            else:
+                results["2.2"] = {
+                    'status': Status.NOT_TESTED,
+                    'modifications': '',
+                    'comments': f'Vérification manuelle requise pour {resultat_page.cadres_testes} cadre(s). Aucun titre suspect détecté automatiquement.'
+                }
+        else:
+            results["2.2"] = {
+                'status': Status.NOT_APPLICABLE,
+                'modifications': '',
+                'comments': 'Aucun cadre détecté sur cette page.'
+            }
+
+        # Log analysis results
+        if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
+            frames_info = f"{resultat_page.cadres_testes} cadre(s) détecté(s)"
+            if resultat_page.cadres_testes > 0:
+                conf_info = f", {resultat_page.cadres_testes - resultat_page.non_conformes_2_1} conforme(s)"
+                self.crawler._callback_log(f"✓ Analyse terminée: {frames_info}{conf_info}")
+            else:
+                self.crawler._callback_log(f"✓ Analyse terminée: {frames_info}")
+
+        return results
+
+    def analyze_all_pages(self, progress_callback=None, log_callback=None) -> Dict:
         """
         Analyze all pages in the audit file.
 
         Args:
             progress_callback: Optional callback function(page_id, progress, total)
+            log_callback: Optional callback function(message) for logging
 
         Returns:
             Dictionary with summary statistics
         """
         pages = self.handler.get_sample_pages()
         total = len(pages)
+
+        # Use crawler's log callback if not provided
+        if log_callback is None and hasattr(self.crawler, '_callback_log'):
+            log_callback = self.crawler._callback_log
+
+        def _log(msg):
+            if log_callback:
+                log_callback(msg)
+            else:
+                print(msg)
 
         for i, page_info in enumerate(pages):
             page_id = page_info['page_id']
@@ -215,7 +384,8 @@ class ODSAuditAnalyzer:
             try:
                 self.analyze_page(page_id, run_automated_tests=True)
             except Exception as e:
-                print(f"Error analyzing {page_id}: {e}")
+                _log(f"⚠️ Erreur lors de l'analyse de {page_id}: {str(e)}")
+                # Continue with next page instead of stopping
 
         # Return global statistics
         return self.handler.calculate_synthesis()
@@ -262,6 +432,72 @@ class ODSAuditAnalyzer:
         else:
             summary += "ℹ️ Taux de conformité non calculable (aucun critère applicable testé)\n"
 
-        summary += "\n---\n\n*Rapport généré automatiquement par RGAA Section 2 Tester*\n"
+        if self.full_rgaa_mode:
+            summary += "\n---\n\n*Rapport généré automatiquement par RGAA Audit Complet (106 critères)*\n"
+        else:
+            summary += "\n---\n\n*Rapport généré automatiquement par RGAA Section 2 Tester*\n"
 
         return summary
+
+    def save_page_csv(self, page_id: str, output_dir: str = ".", use_memory_data: bool = False) -> str:
+        """
+        Save page test results to a CSV file.
+
+        Exports the Pxx tab directly from ODS, preserving all rows
+        with their current test results.
+
+        Args:
+            page_id: Page identifier (P01, P02, etc.)
+            output_dir: Directory to save the CSV file (default: current directory)
+            use_memory_data: If True, use in-memory data instead of ODS
+
+        Returns:
+            Path to the saved CSV file
+        """
+        # Create CSV filename
+        csv_filename = f"{page_id}.csv"
+        csv_path = os.path.join(output_dir, csv_filename)
+
+        if use_memory_data:
+            # Export from in-memory data (for absent pages)
+            page_data = self.handler.get_page_audit(page_id)
+            if not page_data:
+                return ""
+
+            with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.writer(csvfile, delimiter=';', quoting=csv.QUOTE_MINIMAL)
+
+                # Write header (including Page and URL columns for compatibility with populate_xlsx_audit.py)
+                writer.writerow([
+                    'Page',
+                    'URL',
+                    'Thématique',
+                    'Critère',
+                    'Description',
+                    'Statut',
+                    'Dérogation',
+                    'Modifications',
+                    'Commentaires',
+                    'Date de modification'
+                ])
+
+                # Write criteria rows
+                for criterion in page_data.criteria:
+                    writer.writerow([
+                        page_id,
+                        page_data.url,
+                        criterion.theme,
+                        criterion.criterion_id,
+                        criterion.description,
+                        criterion.status.value,
+                        criterion.derogation.value,
+                        criterion.modifications,
+                        criterion.comments,
+                        criterion.modification_date
+                    ])
+
+            return csv_path
+        else:
+            # Export directly from ODS sheet (preserves all rows)
+            success = self.handler.export_page_to_csv(page_id, csv_path)
+            return csv_path if success else ""

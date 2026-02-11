@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-RGAA Section 2 Tester - Package principal
+RGAA Audit Complet - Package principal
 
-Application de test de conformité RGAA 4.1.2 Section 2 (Cadres)
+Application de test de conformité RGAA 4.1.2 - 106 critères complets
 Génère des rapports Markdown pour l'analyse d'accessibilité.
 Supporte également l'analyse via fichiers ODS (grilleAudit.ods).
 
-Version: 1.0.0
+Version: 2.0.0
 """
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"
 __author__ = "RGAA Tester"
 
 # Export main modules
@@ -17,6 +17,10 @@ from .analyzer import AnalyseurRGAA
 from .crawler import Crawler
 from .report_generator import GenerateurRapport
 from .config import get_config
+
+# Export full RGAA tester (106 criteria)
+from .full_rgaa_tester import FullRGAATester, WebPageAnalyzer, TestResult, run_full_rgaa_test
+from .content_detector import ContentDetector
 
 # Export ODS modules (optional feature)
 try:
@@ -29,6 +33,11 @@ try:
         'Crawler',
         'GenerateurRapport',
         'get_config',
+        'FullRGAATester',
+        'WebPageAnalyzer',
+        'TestResult',
+        'run_full_rgaa_test',
+        'ContentDetector',
         'Status',
         'Derogation',
         'AuditCriterion',
@@ -44,5 +53,10 @@ except ImportError:
         'AnalyseurRGAA',
         'Crawler',
         'GenerateurRapport',
-        'get_config'
+        'get_config',
+        'FullRGAATester',
+        'WebPageAnalyzer',
+        'TestResult',
+        'run_full_rgaa_test',
+        'ContentDetector'
     ]

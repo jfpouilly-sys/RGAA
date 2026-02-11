@@ -87,16 +87,37 @@ class PageAudit:
                         derogation: Derogation = Derogation.NO,
                         modifications: str = "", comments: str = "",
                         modification_date: str = "") -> bool:
-        """Update a criterion's values."""
+        """Update a criterion's values. Creates it if it doesn't exist."""
         criterion = self.get_criterion(criterion_id)
-        if criterion:
-            criterion.status = status
-            criterion.derogation = derogation
-            criterion.modifications = modifications
-            criterion.comments = comments
-            criterion.modification_date = modification_date
-            return True
-        return False
+        if not criterion:
+            # Create the criterion if it doesn't exist
+            theme = CRITERIA_THEMES.get(criterion_id, "")
+            criterion = AuditCriterion(
+                theme=theme,
+                criterion_id=criterion_id,
+                description=""
+            )
+            # Insert in sorted position
+            insert_idx = len(self.criteria)
+            parts = criterion_id.split('.')
+            crit_key = (int(parts[0]), int(parts[1]))
+            for i, c in enumerate(self.criteria):
+                c_parts = c.criterion_id.split('.')
+                try:
+                    c_key = (int(c_parts[0]), int(c_parts[1]))
+                    if crit_key < c_key:
+                        insert_idx = i
+                        break
+                except (ValueError, IndexError):
+                    continue
+            self.criteria.insert(insert_idx, criterion)
+
+        criterion.status = status
+        criterion.derogation = derogation
+        criterion.modifications = modifications
+        criterion.comments = comments
+        criterion.modification_date = modification_date
+        return True
 
     def get_statistics(self) -> Dict:
         """Calculate statistics for this page."""

@@ -8,6 +8,7 @@ Provides Tkinter interface for working with grilleAudit.ods files.
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from .ods_handler import RGAAAuditODSHandler
@@ -31,6 +32,8 @@ class ODSAuditFrame(ttk.Frame):
         self.audit_analyzer = None
         self.audit_data = None
         self.config = get_config()
+        self._log_file = None  # File handle for auto-save log
+        self._log_file_path = None
 
         self.create_widgets()
 
@@ -45,6 +48,9 @@ class ODSAuditFrame(ttk.Frame):
         # Pages list section
         self._create_pages_section()
 
+        # Options section (parallel analysis)
+        self._create_options_section()
+
         # Action buttons section
         self._create_actions_section()
 
@@ -53,7 +59,7 @@ class ODSAuditFrame(ttk.Frame):
 
     def _create_file_section(self):
         """Create file selection section."""
-        file_frame = ttk.LabelFrame(self, text="📁 Fichier d'audit ODS", padding=10)
+        file_frame = ttk.LabelFrame(self, text="📁 Fichier d'audit (ODS / XLSX)", padding=10)
         file_frame.pack(fill="x", padx=10, pady=5)
 
         # File path entry
@@ -65,6 +71,24 @@ class ODSAuditFrame(ttk.Frame):
 
         ttk.Button(path_frame, text="Parcourir...", command=self.browse_file).pack(side="left", padx=2)
         ttk.Button(path_frame, text="Charger", command=self.load_file).pack(side="left", padx=2)
+
+        # Output directory section
+        output_frame = ttk.Frame(file_frame)
+        output_frame.pack(fill="x", pady=(10, 0))
+
+        ttk.Label(output_frame, text="📂 Répertoire de sortie (logs, CSV, stats):").pack(side="left")
+
+        output_path_frame = ttk.Frame(file_frame)
+        output_path_frame.pack(fill="x", pady=(5, 0))
+
+        self.output_dir_var = tk.StringVar()
+        self.output_dir_var.set("")  # Empty = use ODS directory
+        ttk.Entry(output_path_frame, textvariable=self.output_dir_var, width=60).pack(side="left", fill="x", expand=True, padx=(0, 5))
+        ttk.Button(output_path_frame, text="Parcourir...", command=self.browse_output_dir).pack(side="left", padx=2)
+        ttk.Button(output_path_frame, text="Réinitialiser", command=self._reset_output_dir).pack(side="left", padx=2)
+
+        # Help text
+        ttk.Label(file_frame, text="(Vide = même répertoire que le fichier ODS)", foreground="gray").pack(anchor="w", pady=(2, 0))
 
     def _create_info_section(self):
         """Create audit information section."""
@@ -117,10 +141,47 @@ class ODSAuditFrame(ttk.Frame):
         self.pages_tree.column("url", width=300)
         self.pages_tree.column("status", width=100, anchor="center")
 
+        # Configure tags for row colors
+        self.pages_tree.tag_configure("checked", background="#cce5ff", foreground="#004085")  # Blue for checked pages
+        self.pages_tree.tag_configure("not_checked", background="white", foreground="black")  # Default
+
         self.pages_tree.pack(fill="both", expand=True)
 
         # Add context menu
         self.pages_tree.bind("<Double-1>", lambda e: self.analyze_selected_page())
+
+    def _create_options_section(self):
+        """Create options section for parallel analysis."""
+        options_frame = ttk.LabelFrame(self, text="⚙️ Options d'analyse", padding=10)
+        options_frame.pack(fill="x", padx=10, pady=5)
+
+        # Parallel analysis checkbox
+        self.parallel_enabled = tk.BooleanVar(value=False)
+        parallel_check = ttk.Checkbutton(
+            options_frame,
+            text="Analyse parallèle",
+            variable=self.parallel_enabled
+        )
+        parallel_check.pack(side="left", padx=5)
+
+        # Number of workers
+        ttk.Label(options_frame, text="Nombre de threads:").pack(side="left", padx=(20, 5))
+        self.parallel_workers = tk.IntVar(value=4)
+        workers_spinbox = ttk.Spinbox(
+            options_frame,
+            from_=2,
+            to=16,
+            width=5,
+            textvariable=self.parallel_workers
+        )
+        workers_spinbox.pack(side="left", padx=5)
+
+        # Info label
+        ttk.Label(
+            options_frame,
+            text="(Recommandé: 4-8 pour machines puissantes)",
+            foreground="gray"
+        ).pack(side="left", padx=10)
 
     def _create_actions_section(self):
         """Create action buttons section."""
@@ -177,17 +238,70 @@ class ODSAuditFrame(ttk.Frame):
         self.log_text.pack(fill="both", expand=True)
 
     def browse_file(self):
-        """Open file browser to select ODS file."""
+        """Open file browser to select audit file (ODS or XLSX)."""
         filepath = filedialog.askopenfilename(
             title="Sélectionner le fichier d'audit RGAA",
             filetypes=[
+                ("Fichiers d'audit", "*.ods *.xlsx *.xlsm"),
                 ("OpenDocument Spreadsheet", "*.ods"),
+                ("Excel Workbook", "*.xlsx *.xlsm"),
                 ("All files", "*.*")
             ],
             initialdir=str(Path.home())
         )
         if filepath:
             self.file_path_var.set(filepath)
+
+    def browse_output_dir(self):
+        """Open directory browser to select output directory."""
+        import os
+        # Start from current output dir or ODS dir
+        initial_dir = self.output_dir_var.get()
+        if not initial_dir:
+            ods_path = self.file_path_var.get()
+            if ods_path:
+                initial_dir = os.path.dirname(ods_path)
+            else:
+                initial_dir = str(Path.home())
+
+        directory = filedialog.askdirectory(
+            title="Sélectionner le répertoire de sortie",
+            initialdir=initial_dir
+        )
+        if directory:
+            self.output_dir_var.set(directory)
+            self.log(f"📂 Répertoire de sortie: {directory}")
+
+    def _reset_output_dir(self):
+        """Reset output directory to use ODS file directory."""
+        self.output_dir_var.set("")
+        self.log("📂 Répertoire de sortie réinitialisé (utilise le répertoire du fichier ODS)")
+
+    def _get_output_dir(self) -> str:
+        """
+        Get the output directory for saving files.
+
+        Returns:
+            Output directory path (uses ODS directory if not specified)
+        """
+        import os
+        output_dir = self.output_dir_var.get().strip()
+        if output_dir:
+            # Create directory if it doesn't exist
+            if not os.path.exists(output_dir):
+                try:
+                    os.makedirs(output_dir, exist_ok=True)
+                except Exception as e:
+                    self.log(f"⚠️ Impossible de créer le répertoire: {e}")
+                    # Fall back to ODS directory
+                    output_dir = ""
+
+        if not output_dir:
+            # Use ODS file directory
+            ods_path = self.file_path_var.get()
+            output_dir = os.path.dirname(ods_path) if ods_path else "."
+
+        return output_dir or "."
 
     def load_file(self):
         """Load the ODS file and display audit information."""
@@ -196,27 +310,147 @@ class ODSAuditFrame(ttk.Frame):
             messagebox.showerror("Erreur", "Veuillez sélectionner un fichier ODS")
             return
 
-        try:
-            self.log("Chargement du fichier d'audit...")
+        self.log("Chargement du fichier d'audit...")
+        self.log("⏳ Veuillez patienter...")
 
+        # Run loading in background thread to keep GUI responsive
+        thread = threading.Thread(
+            target=self._load_file_thread,
+            args=(filepath,),
+            daemon=True
+        )
+        thread.start()
+
+    def _load_file_thread(self, filepath: str):
+        """Load file in background thread."""
+        try:
             self.audit_handler = RGAAAuditODSHandler(filepath)
             self.audit_data = self.audit_handler.load()
             self.audit_analyzer = ODSAuditAnalyzer(self.audit_handler, self.config)
 
-            # Update info labels
-            self.info_labels['date'].config(text=self.audit_data.date or "-")
-            self.info_labels['auditor'].config(text=self.audit_data.auditor or "-")
-            self.info_labels['context'].config(text=self.audit_data.context or "-")
-            self.info_labels['site'].config(text=self.audit_data.site_url or "-")
-
-            # Populate pages list
-            self.populate_pages_list()
-
-            self.log(f"✅ Fichier chargé: {len(self.audit_data.pages)} page(s) trouvée(s)")
+            # Update UI on main thread
+            self.after(0, self._load_file_complete)
 
         except Exception as e:
-            messagebox.showerror("Erreur", f"Impossible de charger le fichier:\n{str(e)}")
-            self.log(f"❌ Erreur: {str(e)}")
+            self.after(0, lambda: self._load_file_error(str(e)))
+
+    def _update_analyzer_output_dir(self):
+        """Update the analyzer's output directory before analysis."""
+        if self.audit_analyzer:
+            self.audit_analyzer.output_dir = self._get_output_dir()
+
+    def _load_file_complete(self):
+        """Called when file loading completes successfully."""
+        # Update info labels
+        self.info_labels['date'].config(text=self.audit_data.date or "-")
+        self.info_labels['auditor'].config(text=self.audit_data.auditor or "-")
+        self.info_labels['context'].config(text=self.audit_data.context or "-")
+        self.info_labels['site'].config(text=self.audit_data.site_url or "-")
+
+        # Open log file in the same directory as the ODS file
+        self._open_log_file()
+
+        # Populate pages list
+        self.populate_pages_list()
+
+        self.log(f"✅ Fichier chargé: {len(self.audit_data.pages)} page(s) trouvée(s)")
+        self.log(f"📂 Répertoire de sortie: {self._get_output_dir()}")
+
+        # Check for duplicate URLs and warn
+        url_to_pages = {}
+        for page in self.audit_data.pages:
+            if page.url and page.url not in ["Absente", ""]:
+                if page.url in url_to_pages:
+                    url_to_pages[page.url].append(page.page_id)
+                else:
+                    url_to_pages[page.url] = [page.page_id]
+
+        for url, page_ids in url_to_pages.items():
+            if len(page_ids) > 1:
+                self.log(f"⚠️ ATTENTION: URL dupliquée - {url[:50]}... utilisée par: {', '.join(page_ids)}")
+
+        # Log each page's URL for verification
+        self.log("📋 URLs des pages:")
+        for page in self.audit_data.pages:
+            url_display = page.url[:60] + "..." if len(page.url) > 60 else page.url
+            self.log(f"   {page.page_id}: {url_display}")
+
+    def _open_log_file(self):
+        """Open the log file for auto-saving."""
+        try:
+            # Close previous log file if open
+            if self._log_file:
+                self._log_file.close()
+
+            # Create log file path in output directory
+            import os
+            output_dir = self._get_output_dir()
+            self._log_file_path = os.path.join(output_dir, "audit_journal.log")
+
+            # Open in append mode
+            self._log_file = open(self._log_file_path, 'a', encoding='utf-8')
+
+            # Write session separator
+            from datetime import datetime
+            self._log_file.write(f"\n{'=' * 60}\n")
+            self._log_file.write(f"Session: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n")
+            self._log_file.write(f"Fichier: {self.file_path_var.get()}\n")
+            self._log_file.write(f"Répertoire de sortie: {output_dir}\n")
+            self._log_file.write(f"{'=' * 60}\n")
+            self._log_file.flush()
+        except Exception:
+            self._log_file = None
+
+    def _make_page_logger(self, page_id: str):
+        """
+        Create a logger that writes to both the general log and a page-specific log file.
+
+        Args:
+            page_id: Page identifier (P01, P02, etc.)
+
+        Returns:
+            Tuple of (page_logger_function, page_log_file_handle)
+        """
+        import os
+        from datetime import datetime
+
+        output_dir = self._get_output_dir()
+        log_path = os.path.join(output_dir, f"{page_id}.log")
+
+        try:
+            page_file = open(log_path, 'w', encoding='utf-8')
+            page_file.write(f"{'=' * 60}\n")
+            page_file.write(f"Log {page_id} - {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n")
+            page_file.write(f"{'=' * 60}\n")
+            page_file.flush()
+        except Exception:
+            page_file = None
+
+        def page_logger(message):
+            # Write to general log (thread-safe via self.after)
+            self.log(message)
+            # Write to page-specific log file
+            if page_file:
+                try:
+                    page_file.write(f"{message}\n")
+                    page_file.flush()
+                except Exception:
+                    pass
+
+        return page_logger, page_file
+
+    def _close_page_logger(self, page_log_file):
+        """Close a page-specific log file handle."""
+        if page_log_file:
+            try:
+                page_log_file.close()
+            except Exception:
+                pass
+
+    def _load_file_error(self, error_msg: str):
+        """Called when file loading fails."""
+        messagebox.showerror("Erreur", f"Impossible de charger le fichier:\n{error_msg}")
+        self.log(f"❌ Erreur: {error_msg}")
 
     def populate_pages_list(self):
         """Populate the pages treeview."""
@@ -229,6 +463,11 @@ class ODSAuditFrame(ttk.Frame):
             stats = page.get_statistics()
             status_text = self._format_page_status(stats)
 
+            # Determine if page has been actually tested (has C or NC results, not just NA)
+            # A page is "checked" only if it has at least one C or NC result
+            is_checked = (stats['compliant'] + stats['non_compliant']) > 0
+            row_tag = "checked" if is_checked else "not_checked"
+
             self.pages_tree.insert(
                 "",
                 "end",
@@ -237,7 +476,8 @@ class ODSAuditFrame(ttk.Frame):
                     page.title or "(Sans titre)",
                     page.url or "(Absente)",
                     status_text
-                )
+                ),
+                tags=(row_tag,)
             )
 
     def _format_page_status(self, stats: dict) -> str:
@@ -272,35 +512,74 @@ class ODSAuditFrame(ttk.Frame):
 
     def _analyze_page_thread(self, page_id: str):
         """Analyze a page in a separate thread."""
-        try:
-            self.log(f"Analyse de la page {page_id}...")
+        # Update output directory for CSV files
+        self._update_analyzer_output_dir()
 
-            # Set up crawler logging callback
+        # Create per-page logger
+        page_logger, page_log_file = self._make_page_logger(page_id)
+
+        try:
+            # Get page info
+            page_info = self.audit_handler.get_page_audit(page_id)
+            title = page_info.title if page_info else ""
+            url = page_info.url if page_info else ""
+
+            page_logger("=" * 50)
+            page_logger(f"📄 Analyse de {page_id}: {title}")
+            if url:
+                page_logger(f"🔗 {url}")
+            page_logger("=" * 50)
+
+            # Set up crawler logging callback to page logger
             if self.audit_analyzer and self.audit_analyzer.crawler:
-                self.audit_analyzer.crawler.definir_callback_log(self.log)
+                self.audit_analyzer.crawler.definir_callback_log(page_logger)
 
             page = self.audit_analyzer.analyze_page(page_id, run_automated_tests=True)
 
             if page:
                 stats = page.get_statistics()
-                self.log(f"✅ Page {page_id} analysée: {stats['compliant']}/{stats['total'] - stats['not_applicable']} conformes")
+                page_logger("")
+                page_logger("✅ ANALYSE TERMINÉE!")
+                page_logger(f"📊 Résultats pour {page_id}:")
+                page_logger(f"   - Conformes (C): {stats['compliant']}")
+                page_logger(f"   - Non conformes (NC): {stats['non_compliant']}")
+                page_logger(f"   - Non applicables (NA): {stats['not_applicable']}")
+                page_logger(f"   - Non testés (NT): {stats['not_tested']}")
 
                 # Auto-save results
                 try:
                     self.audit_handler.save()
-                    self.log("💾 Résultats sauvegardés automatiquement")
+                    page_logger("💾 Résultats sauvegardés automatiquement")
                 except Exception as save_error:
-                    self.log(f"⚠️ Avertissement: Sauvegarde échouée - {str(save_error)}")
+                    page_logger(f"⚠️ Avertissement: Sauvegarde échouée - {str(save_error)}")
 
-                # Update UI
+                # Update UI and show completion message
                 self.after(0, self.populate_pages_list)
+                self.after(0, lambda: self._show_page_analysis_complete(page_id, stats))
             else:
-                self.log(f"❌ Impossible d'analyser la page {page_id}")
+                page_logger(f"❌ Impossible d'analyser la page {page_id}")
+                self.after(0, lambda: messagebox.showerror("Erreur", f"Impossible d'analyser la page {page_id}"))
 
         except Exception as e:
-            self.log(f"❌ Erreur lors de l'analyse: {str(e)}")
+            page_logger(f"❌ Erreur lors de l'analyse: {str(e)}")
             import traceback
-            self.log(f"Détails: {traceback.format_exc()}")
+            page_logger(f"Détails: {traceback.format_exc()}")
+            self.after(0, lambda: messagebox.showerror("Erreur", f"Erreur lors de l'analyse:\n{str(e)}"))
+        finally:
+            self._close_page_logger(page_log_file)
+
+    def _show_page_analysis_complete(self, page_id: str, stats: dict):
+        """Show page analysis completion message."""
+        message = (
+            f"Analyse de {page_id} terminée!\n\n"
+            f"📊 Résultats:\n"
+            f"  • Conformes (C): {stats['compliant']}\n"
+            f"  • Non conformes (NC): {stats['non_compliant']}\n"
+            f"  • Non applicables (NA): {stats['not_applicable']}\n"
+            f"  • Non testés (NT): {stats['not_tested']}\n\n"
+            f"Les résultats ont été sauvegardés."
+        )
+        messagebox.showinfo("Analyse terminée", message)
 
     def analyze_all_pages(self):
         """Analyze all pages in the audit file."""
@@ -322,19 +601,69 @@ class ODSAuditFrame(ttk.Frame):
     def _analyze_all_pages_thread(self):
         """Analyze all pages in a separate thread."""
         try:
-            self.log("Début de l'analyse de toutes les pages...")
+            parallel_enabled = self.parallel_enabled.get()
+            num_workers = self.parallel_workers.get()
+
+            # Update output directory for CSV files
+            self._update_analyzer_output_dir()
+            output_dir = self._get_output_dir()
+
+            self.log("=" * 50)
+            if parallel_enabled:
+                self.log(f"Début de l'analyse parallèle ({num_workers} threads)...")
+            else:
+                self.log("Début de l'analyse séquentielle...")
+            self.log(f"📂 Répertoire de sortie: {output_dir}")
+            self.log("=" * 50)
 
             # Set up crawler logging callback
             if self.audit_analyzer and self.audit_analyzer.crawler:
                 self.audit_analyzer.crawler.definir_callback_log(self.log)
 
-            def progress_callback(page_id, current, total):
-                self.log(f"Analyse {current}/{total}: {page_id}...")
+            # Get pages info for display
+            pages = self.audit_handler.get_sample_pages()
+            total = len(pages)
 
-            stats = self.audit_analyzer.analyze_all_pages(progress_callback=progress_callback)
+            if parallel_enabled:
+                # Parallel analysis
+                stats = self._analyze_pages_parallel(pages, num_workers)
+            else:
+                # Sequential analysis with per-page log files
+                for i, page_info in enumerate(pages):
+                    page_id = page_info['page_id']
+                    title = page_info['title']
+                    url = page_info['url']
 
-            self.log("✅ Analyse terminée!")
-            self.log(f"Résultats: {stats['compliant']} conformes, {stats['non_compliant']} non conformes, {stats['not_applicable']} N/A")
+                    # Create per-page logger
+                    page_logger, page_log_file = self._make_page_logger(page_id)
+
+                    try:
+                        page_logger("")
+                        page_logger(f"📄 [{i + 1}/{total}] Analyse de {page_id}: {title}")
+                        if url:
+                            page_logger(f"   🔗 {url}")
+
+                        # Set crawler callback to page logger
+                        if self.audit_analyzer and self.audit_analyzer.crawler:
+                            self.audit_analyzer.crawler.definir_callback_log(page_logger)
+
+                        self.audit_analyzer.analyze_page(page_id, run_automated_tests=True)
+                    except Exception as e:
+                        page_logger(f"⚠️ Erreur lors de l'analyse de {page_id}: {str(e)}")
+                    finally:
+                        self._close_page_logger(page_log_file)
+
+                stats = self.audit_handler.calculate_synthesis()
+
+            self.log("")
+            self.log("=" * 50)
+            self.log("✅ ANALYSE TERMINÉE!")
+            self.log("=" * 50)
+            self.log(f"📊 Résultats:")
+            self.log(f"   - Conformes (C): {stats['compliant']}")
+            self.log(f"   - Non conformes (NC): {stats['non_compliant']}")
+            self.log(f"   - Non applicables (NA): {stats['not_applicable']}")
+            self.log(f"   - Non testés (NT): {stats['not_tested']}")
 
             # Auto-save results
             try:
@@ -343,13 +672,103 @@ class ODSAuditFrame(ttk.Frame):
             except Exception as save_error:
                 self.log(f"⚠️ Avertissement: Sauvegarde échouée - {str(save_error)}")
 
-            # Update UI
+            # Update UI and show completion message
             self.after(0, self.populate_pages_list)
+            self.after(0, lambda: self._show_analysis_complete(stats))
 
         except Exception as e:
             self.log(f"❌ Erreur lors de l'analyse: {str(e)}")
             import traceback
             self.log(f"Détails: {traceback.format_exc()}")
+            self.after(0, lambda: messagebox.showerror("Erreur", f"Erreur lors de l'analyse:\n{str(e)}"))
+
+    def _analyze_pages_parallel(self, pages: list, num_workers: int) -> dict:
+        """
+        Analyze pages in parallel using ThreadPoolExecutor.
+
+        Args:
+            pages: List of page info dictionaries
+            num_workers: Number of parallel workers
+
+        Returns:
+            Statistics dictionary
+        """
+        import threading
+
+        total = len(pages)
+        completed = [0]  # Use list to allow modification in nested function
+        lock = threading.Lock()
+
+        def analyze_single_page(page_info):
+            """Analyze a single page (runs in worker thread)."""
+            page_id = page_info['page_id']
+            title = page_info['title']
+            url = page_info['url']
+
+            # Create per-page logger for this thread
+            page_logger, page_log_file = self._make_page_logger(page_id)
+
+            # Log start (thread-safe via self.log using after())
+            with lock:
+                completed[0] += 1
+                current = completed[0]
+
+            page_logger("")
+            page_logger(f"📄 [{current}/{total}] Analyse de {page_id}: {title}")
+            if url:
+                page_logger(f"   🔗 {url}")
+
+            try:
+                # Each thread needs its own crawler for HTTP requests
+                from .crawler import Crawler
+                from .ods_analyzer import ODSAuditAnalyzer
+
+                # Create a thread-local analyzer that shares the handler
+                thread_analyzer = ODSAuditAnalyzer.__new__(ODSAuditAnalyzer)
+                thread_analyzer.handler = self.audit_handler
+                thread_analyzer.config = self.config
+                thread_analyzer.crawler = Crawler(self.config)
+                thread_analyzer.crawler.definir_callback_log(page_logger)
+                thread_analyzer.full_rgaa_mode = True
+                thread_analyzer.analyseur = None
+                thread_analyzer.output_dir = self._get_output_dir()
+
+                # Analyze the page
+                thread_analyzer.analyze_page(page_id, run_automated_tests=True)
+
+                return {'page_id': page_id, 'success': True}
+
+            except Exception as e:
+                page_logger(f"⚠️ Erreur {page_id}: {str(e)}")
+                return {'page_id': page_id, 'success': False, 'error': str(e)}
+            finally:
+                self._close_page_logger(page_log_file)
+
+        # Run analysis in parallel
+        self.log(f"🚀 Lancement de {num_workers} workers parallèles...")
+
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            futures = {executor.submit(analyze_single_page, page): page for page in pages}
+
+            for future in as_completed(futures):
+                result = future.result()
+                # Results are logged within each worker
+
+        # Calculate final statistics
+        return self.audit_handler.calculate_synthesis()
+
+    def _show_analysis_complete(self, stats: dict):
+        """Show analysis completion message."""
+        message = (
+            f"Analyse de toutes les pages terminée!\n\n"
+            f"📊 Résultats:\n"
+            f"  • Conformes (C): {stats['compliant']}\n"
+            f"  • Non conformes (NC): {stats['non_compliant']}\n"
+            f"  • Non applicables (NA): {stats['not_applicable']}\n"
+            f"  • Non testés (NT): {stats['not_tested']}\n\n"
+            f"Les résultats ont été sauvegardés automatiquement."
+        )
+        messagebox.showinfo("Analyse terminée", message)
 
     def save_results(self):
         """Save the audit results to ODS file."""
@@ -531,3 +950,11 @@ class ODSAuditFrame(ttk.Frame):
         self.log_text.insert("end", f"{message}\n")
         self.log_text.see("end")
         self.log_text.config(state="disabled")
+
+        # Auto-save to log file
+        if self._log_file:
+            try:
+                self._log_file.write(f"{message}\n")
+                self._log_file.flush()
+            except Exception:
+                pass
