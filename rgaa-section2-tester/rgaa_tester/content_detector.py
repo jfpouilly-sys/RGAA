@@ -274,8 +274,8 @@ class ContentDetector:
         # Exclude the html tag itself
         content_lang_changes = [el for el in lang_changes if el.name != 'html']
 
-        # RTL content
-        rtl_content = self.soup.select('[dir="rtl"], [dir="ltr"]')
+        # RTL content (only dir="rtl" indicates actual RTL reading direction change)
+        rtl_content = self.soup.select('[dir="rtl"]')
         arabic_hebrew = self.soup.find_all(string=re.compile(r'[\u0600-\u06FF\u0590-\u05FF]'))
 
         return {
@@ -428,9 +428,27 @@ class ContentDetector:
         downloads = self.soup.select(
             'a[href$=".pdf"], a[href$=".doc"], a[href$=".docx"], '
             'a[href$=".xls"], a[href$=".xlsx"], a[href$=".odt"], '
-            'a[href$=".ods"], a[href$=".ppt"], a[href$=".pptx"]'
+            'a[href$=".ods"], a[href$=".ppt"], a[href$=".pptx"], '
+            'a[href$=".rtf"], a[href$=".csv"], a[href$=".epub"], '
+            'a[href$=".zip"], a[href$=".txt"]'
         )
         animations = self.soup.select('[style*="animation"], .animate, .animated, marquee, blink')
+
+        # Also detect animated GIFs (may cause flashing - criterion 13.7)
+        gif_images = self.soup.select('img[src$=".gif"], img[data-src$=".gif"]')
+
+        # Detect CSS animations in <style> blocks (@keyframes, animation properties)
+        css_animations = []
+        for style_tag in self.soup.select('style'):
+            css_text = style_tag.get_text()
+            if '@keyframes' in css_text or 'animation' in css_text:
+                css_animations.append(style_tag)
+
+        # Detect carousel/slider patterns (moving content - criterion 13.8)
+        carousels = self.soup.select(
+            '.carousel, .slider, .slideshow, .banner-rotator, '
+            '[class*="carousel"], [class*="slider"], [class*="slideshow"]'
+        )
 
         # Time limits
         time_limits = self.soup.select('[data-timeout], [data-timer]')
@@ -438,18 +456,24 @@ class ContentDetector:
         # Orientation lock
         orientation_meta = self.soup.select('meta[name="viewport"][content*="orientation"]')
 
+        has_animations = (len(animations) > 0 or len(gif_images) > 0 or
+                          len(css_animations) > 0 or len(carousels) > 0)
+
         return {
             'has_refresh': len(refresh) > 0,
             'has_auto_play': len(auto_play) > 0,
             'has_downloads': len(downloads) > 0,
-            'has_animations': len(animations) > 0,
+            'has_animations': has_animations,
             'has_time_limits': len(time_limits) > 0,
             'has_orientation_lock': len(orientation_meta) > 0,
             'elements': {
                 'refresh': refresh,
                 'auto_play': auto_play,
                 'downloads': downloads,
-                'animations': animations
+                'animations': animations,
+                'gif_images': gif_images,
+                'css_animations': css_animations,
+                'carousels': carousels
             },
             'downloads_count': len(downloads)
         }
@@ -527,7 +551,10 @@ class ContentDetector:
                 '11.8', '11.9', '11.10', '11.11', '11.12', '11.13'
             ])
         else:
-            if not self.results['forms']['has_fieldsets']:
+            # 11.6/11.7: NA only if no fieldsets AND no radio/checkbox groups that need grouping
+            if (not self.results['forms']['has_fieldsets'] and
+                    not self.results['forms']['has_radio_groups'] and
+                    not self.results['forms']['has_checkbox_groups']):
                 na_criteria.extend(['11.6', '11.7'])
             if not self.results['forms']['has_buttons']:
                 na_criteria.append('11.9')
