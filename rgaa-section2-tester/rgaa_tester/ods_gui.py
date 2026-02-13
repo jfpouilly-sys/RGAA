@@ -614,6 +614,9 @@ class ODSAuditFrame(ttk.Frame):
 
     def _show_page_analysis_complete(self, page_id: str, stats: dict):
         """Show page analysis completion message."""
+        # Focus 10.7 status info
+        focus_info = self._get_focus_status_info()
+
         message = (
             f"Analyse de {page_id} terminée!\n\n"
             f"📊 Résultats:\n"
@@ -621,6 +624,7 @@ class ODSAuditFrame(ttk.Frame):
             f"  • Non conformes (NC): {stats['non_compliant']}\n"
             f"  • Non applicables (NA): {stats['not_applicable']}\n"
             f"  • Non testés (NT): {stats['not_tested']}\n\n"
+            f"🔎 Critère 10.7 (focus): {focus_info}\n\n"
             f"Les résultats ont été sauvegardés."
         )
         messagebox.showinfo("Analyse terminée", message)
@@ -720,6 +724,7 @@ class ODSAuditFrame(ttk.Frame):
             self.log(f"   - Non conformes (NC): {stats['non_compliant']}")
             self.log(f"   - Non applicables (NA): {stats['not_applicable']}")
             self.log(f"   - Non testés (NT): {stats['not_tested']}")
+            self.log(f"   - Critère 10.7 (focus): {self._get_focus_status_info()}")
 
             # Auto-save results
             try:
@@ -829,6 +834,8 @@ class ODSAuditFrame(ttk.Frame):
 
     def _show_analysis_complete(self, stats: dict):
         """Show analysis completion message."""
+        focus_info = self._get_focus_status_info()
+
         message = (
             f"Analyse de toutes les pages terminée!\n\n"
             f"📊 Résultats:\n"
@@ -836,9 +843,35 @@ class ODSAuditFrame(ttk.Frame):
             f"  • Non conformes (NC): {stats['non_compliant']}\n"
             f"  • Non applicables (NA): {stats['not_applicable']}\n"
             f"  • Non testés (NT): {stats['not_tested']}\n\n"
+            f"🔎 Critère 10.7 (focus): {focus_info}\n\n"
             f"Les résultats ont été sauvegardés automatiquement."
         )
         messagebox.showinfo("Analyse terminée", message)
+
+    def _get_focus_status_info(self) -> str:
+        """Return a human-readable string about focus 10.7 test status."""
+        from .ods_analyzer import PLAYWRIGHT_AVAILABLE, PLAYWRIGHT_IMPORT_ERROR
+
+        focus_enabled = self.focus_test_enabled.get()
+
+        if focus_enabled and PLAYWRIGHT_AVAILABLE:
+            return "analyse dynamique Playwright exécutée"
+        elif focus_enabled and not PLAYWRIGHT_AVAILABLE:
+            return (
+                f"demandé mais Playwright indisponible ({PLAYWRIGHT_IMPORT_ERROR}). "
+                f"Installer: pip install playwright && playwright install chromium"
+            )
+        elif not focus_enabled and PLAYWRIGHT_AVAILABLE:
+            return (
+                "analyse statique uniquement (cocher 'Test focus 10.7' "
+                "pour activer l'analyse Playwright)"
+            )
+        else:
+            return (
+                f"analyse statique uniquement — Playwright non installé "
+                f"({PLAYWRIGHT_IMPORT_ERROR}). "
+                f"Installer: pip install playwright && playwright install chromium"
+            )
 
     def save_results(self):
         """Save the audit results to ODS file."""

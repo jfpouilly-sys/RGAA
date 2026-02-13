@@ -9,6 +9,7 @@ Optionally enhances criterion 10.7 with Playwright-based focus testing.
 
 import csv
 import os
+import sys
 from typing import Dict, List, Optional
 from .ods_handler import RGAAAuditODSHandler
 from .ods_models import Status, Derogation, PageAudit, AuditCriterion
@@ -17,13 +18,20 @@ from .crawler import Crawler
 from .config import get_config
 from .full_rgaa_tester import FullRGAATester, WebPageAnalyzer, TestResult
 
+# Ensure criterion_10_7 package is importable (it lives alongside rgaa_tester/)
+_parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _parent_dir not in sys.path:
+    sys.path.insert(0, _parent_dir)
+
 # Optional Playwright-based focus testing for criterion 10.7
+PLAYWRIGHT_AVAILABLE = False
+PLAYWRIGHT_IMPORT_ERROR = ""
 try:
     from criterion_10_7.focus_tester import FocusTester, PageFocusResult
     from criterion_10_7.constants import FocusStatus
     PLAYWRIGHT_AVAILABLE = True
-except ImportError:
-    PLAYWRIGHT_AVAILABLE = False
+except ImportError as _e:
+    PLAYWRIGHT_IMPORT_ERROR = str(_e)
 
 
 class ODSAuditAnalyzer:
@@ -278,10 +286,36 @@ class ODSAuditAnalyzer:
             }
 
         # Enhance criterion 10.7 with Playwright dynamic analysis if enabled
-        if self.focus_test_enabled and PLAYWRIGHT_AVAILABLE:
-            focus_result = self._run_focus_test(url)
-            if focus_result:
-                results["10.7"] = focus_result
+        focus_10_7_status = "non demandé"
+        if self.focus_test_enabled:
+            if PLAYWRIGHT_AVAILABLE:
+                focus_result = self._run_focus_test(url)
+                if focus_result:
+                    results["10.7"] = focus_result
+                    focus_10_7_status = f"exécuté ({focus_result['status'].value})"
+                else:
+                    focus_10_7_status = "exécuté mais erreur (résultat statique conservé)"
+            else:
+                focus_10_7_status = f"indisponible — {PLAYWRIGHT_IMPORT_ERROR}"
+                if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
+                    self.crawler._callback_log(
+                        f"   ⚠️ Critère 10.7 focus (Playwright): {focus_10_7_status}"
+                    )
+                    self.crawler._callback_log(
+                        "      → Installer avec: pip install playwright && playwright install chromium"
+                    )
+        else:
+            # Focus test not enabled — log the reason
+            if not PLAYWRIGHT_AVAILABLE:
+                focus_10_7_status = (
+                    "désactivé (Playwright non installé). "
+                    "Installer: pip install playwright && playwright install chromium"
+                )
+            else:
+                focus_10_7_status = (
+                    "désactivé (cocher 'Test focus 10.7' dans les options, "
+                    "ou utiliser --focus en CLI)"
+                )
 
         # Log summary
         if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
@@ -296,6 +330,10 @@ class ODSAuditAnalyzer:
                 self.crawler._callback_log(
                     f"  ↳ {auto_na} critères NA auto-détectés (éléments absents de la page)"
                 )
+            # Always log criterion 10.7 focus test status
+            self.crawler._callback_log(
+                f"  ↳ Critère 10.7 focus (Playwright): {focus_10_7_status}"
+            )
 
         return results
 
@@ -603,6 +641,40 @@ class ODSAuditAnalyzer:
                 summary += f"❌ **{rate:.1f}% conforme** - Travail important requis\n"
         else:
             summary += "ℹ️ Taux de conformité non calculable (aucun critère applicable testé)\n"
+
+        # Criterion 10.7 focus testing status section
+        summary += "\n## Critère 10.7 — Visibilité du focus\n\n"
+        if self.focus_test_enabled and PLAYWRIGHT_AVAILABLE:
+            summary += (
+                "- **Test dynamique (Playwright)** : activé\n"
+                "- Les résultats du critère 10.7 ont été enrichis par une analyse "
+                "des computed styles CSS avant/après focus\n"
+                "- Couverture estimée : ~60%\n"
+            )
+        elif self.focus_test_enabled and not PLAYWRIGHT_AVAILABLE:
+            summary += (
+                f"- **Test dynamique (Playwright)** : demandé mais indisponible\n"
+                f"- Raison : {PLAYWRIGHT_IMPORT_ERROR}\n"
+                "- Installation : `pip install playwright && playwright install chromium`\n"
+                "- Le critère 10.7 a été testé en analyse statique uniquement (couverture ~50%)\n"
+            )
+        else:
+            summary += (
+                "- **Test dynamique (Playwright)** : désactivé\n"
+            )
+            if not PLAYWRIGHT_AVAILABLE:
+                summary += (
+                    f"- Playwright non installé ({PLAYWRIGHT_IMPORT_ERROR})\n"
+                    "- Installation : `pip install playwright && playwright install chromium`\n"
+                )
+            else:
+                summary += (
+                    "- Pour activer : cocher 'Test focus 10.7' dans les options, "
+                    "ou utiliser `--focus` en CLI\n"
+                )
+            summary += (
+                "- Le critère 10.7 a été testé en analyse statique uniquement (couverture ~50%)\n"
+            )
 
         if self.full_rgaa_mode:
             summary += "\n---\n\n*Rapport généré automatiquement par RGAA Audit Complet (106 critères)*\n"
