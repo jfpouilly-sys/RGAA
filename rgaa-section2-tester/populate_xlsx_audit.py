@@ -136,16 +136,21 @@ class XLSXAuditPopulator:
             
             ws = wb[page_id]
             
-            # Create status mapping from CSV
-            csv_status_map = {}
+            # Create mapping from CSV: criterion -> {status, modifications, commentaires, date}
+            csv_data_map = {}
             page_name = ""
             page_url = ""
-            
+
             for row in csv_rows:
                 criterion = str(row['Critère']).strip()
-                status = str(row['Statut']).strip()
-                csv_status_map[criterion] = self.STATUS_MAPPING.get(status, status)
-                
+                status = str(row.get('Statut', '')).strip()
+                csv_data_map[criterion] = {
+                    'status': self.STATUS_MAPPING.get(status, status),
+                    'modifications': str(row.get('Modifications', '')).strip(),
+                    'commentaires': str(row.get('Commentaires', '')).strip(),
+                    'date': str(row.get('Date de modification', '')).strip(),
+                }
+
                 # Get page info from first row
                 if not page_name:
                     page_name = row['Page']
@@ -156,29 +161,44 @@ class XLSXAuditPopulator:
                 ws.cell(row=2, column=1).value = f"{page_name} : {page_url}"
             
             # Update data rows (starting from row 5 in Excel - row index 5)
-            # Column mapping: A=1(Thématique/empty), B=2(Critère), C=3(Recommandation), 
-            #                 D=4(Statut), E=5(Dérogation)
+            # Column mapping: A=1(Thématique), B=2(Critère), C=3(Recommandation),
+            #                 D=4(Statut), E=5(Dérogation), F=6(Modifications),
+            #                 G=7(Commentaires), H=8(Date de modification)
             updates = 0
-            
+
             # Iterate through rows starting from row 5
             for row_idx in range(5, ws.max_row + 1):
                 # Column B (2) contains the criterion number in data rows
                 criterion_cell = ws.cell(row=row_idx, column=2)
                 criterion_text = str(criterion_cell.value).strip() if criterion_cell.value else ""
-                
-                if not criterion_text or criterion_text not in csv_status_map:
+
+                if not criterion_text or criterion_text not in csv_data_map:
                     continue
-                
+
+                csv_entry = csv_data_map[criterion_text]
+                new_status = csv_entry['status']
+
                 # Update Status (column D = 4)
-                new_status = csv_status_map[criterion_text]
                 ws.cell(row=row_idx, column=4).value = new_status
-                
+
                 # Update Dérogation (column E = 5)
                 if new_status == 'NA':
                     ws.cell(row=row_idx, column=5).value = 'S.O.'
                 elif new_status in ['C', 'NC', 'NT']:
                     ws.cell(row=row_idx, column=5).value = 'N'
-                
+
+                # Update Modifications (column F = 6)
+                if csv_entry['modifications']:
+                    ws.cell(row=row_idx, column=6).value = csv_entry['modifications']
+
+                # Update Commentaires (column G = 7)
+                if csv_entry['commentaires']:
+                    ws.cell(row=row_idx, column=7).value = csv_entry['commentaires']
+
+                # Update Date de modification (column H = 8)
+                if csv_entry['date']:
+                    ws.cell(row=row_idx, column=8).value = csv_entry['date']
+
                 updates += 1
             
             print(f"✓ {updates} criteria updated")
