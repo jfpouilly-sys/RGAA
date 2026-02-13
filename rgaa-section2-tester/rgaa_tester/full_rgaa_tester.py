@@ -637,6 +637,20 @@ class FullRGAATester:
     # THÈME 4: MULTIMÉDIA (Critères 4.1 - 4.13)
     # ========================================================================
 
+    def _find_media_iframes(self) -> list:
+        """Find iframes embedding video/audio platforms (YouTube, Vimeo, etc.)."""
+        media_iframes = []
+        media_pattern = re.compile(
+            r'youtube|youtu\.be|vimeo|dailymotion|twitch|soundcloud|spotify|deezer|bandcamp|'
+            r'vidyard|wistia|brightcove|jwplatform|player\.',
+            re.I
+        )
+        for iframe in self.soup.find_all('iframe'):
+            src = iframe.get('src', '') or iframe.get('data-src', '') or ''
+            if media_pattern.search(src):
+                media_iframes.append(iframe)
+        return media_iframes
+
     def test_4_1(self) -> TestResult:
         """Critère 4.1: Média temporel avec transcription ou audiodescription."""
         issues = []
@@ -645,9 +659,9 @@ class FullRGAATester:
         audios = self.soup.find_all('audio')
         media_objects = self.soup.find_all('object', type=re.compile(r'video/|audio/', re.I))
         embeds = self.soup.find_all('embed', type=re.compile(r'video/|audio/', re.I))
-        youtube_iframes = self.soup.find_all('iframe', src=re.compile(r'youtube|vimeo|dailymotion', re.I))
+        media_iframes = self._find_media_iframes()
 
-        all_media = videos + audios + media_objects + embeds + youtube_iframes
+        all_media = videos + audios + media_objects + embeds + media_iframes
 
         for media in all_media:
             tracks = media.find_all('track') if hasattr(media, 'find_all') else []
@@ -696,7 +710,7 @@ class FullRGAATester:
         """Critère 4.3: Sous-titres synchronisés pour vidéos."""
         issues = []
         videos = self.soup.find_all('video')
-        video_iframes = self.soup.find_all('iframe', src=re.compile(r'youtube|vimeo', re.I))
+        video_iframes = self._find_media_iframes()
 
         for video in videos:
             tracks = video.find_all('track')
@@ -706,7 +720,7 @@ class FullRGAATester:
                 issues.append(f"Vidéo sans sous-titres: {src}")
 
         if video_iframes:
-            issues.append("VÉRIFICATION MANUELLE: Vérifier sous-titres des vidéos YouTube/Vimeo")
+            issues.append("VÉRIFICATION MANUELLE: Vérifier sous-titres des vidéos intégrées (iframe)")
 
         if not videos and not video_iframes:
             return TestResult("4.3", Status.NOT_APPLICABLE, [], "Aucune vidéo présente sur la page", "", 0.90)
@@ -719,7 +733,7 @@ class FullRGAATester:
     def test_4_4(self) -> TestResult:
         """Critère 4.4: Sous-titres pertinents pour médias synchronisés."""
         videos = self.soup.find_all('video')
-        video_iframes = self.soup.find_all('iframe', src=re.compile(r'youtube|vimeo', re.I))
+        video_iframes = self._find_media_iframes()
 
         if not videos and not video_iframes:
             return TestResult("4.4", Status.NOT_APPLICABLE, [], "Aucune vidéo présente sur la page", "", 0.60)
@@ -778,8 +792,10 @@ class FullRGAATester:
     def test_4_7(self) -> TestResult:
         """Critère 4.7: Identification des médias temporels."""
         media = self.soup.find_all(['video', 'audio'])
-        if not media:
-            return TestResult("4.7", Status.NOT_APPLICABLE, [], "Aucun média présent sur la page temporel", "", 0.70)
+        media_iframes = self._find_media_iframes()
+
+        if not media and not media_iframes:
+            return TestResult("4.7", Status.NOT_APPLICABLE, [], "Aucun média temporel présent sur la page", "", 0.70)
 
         issues = []
         for m in media:
@@ -791,6 +807,12 @@ class FullRGAATester:
 
             if not has_label and not has_heading:
                 issues.append(f"Média <{m.name}> sans identification accessible")
+
+        for iframe in media_iframes:
+            has_label = iframe.get('aria-label') or iframe.get('aria-labelledby') or iframe.get('title')
+            if not has_label:
+                src = (iframe.get('src', '') or iframe.get('data-src', ''))[:50]
+                issues.append(f"Iframe média sans titre accessible: {src}")
 
         if issues:
             return TestResult("4.7", Status.NON_COMPLIANT, issues,
@@ -870,13 +892,18 @@ class FullRGAATester:
     def test_4_11(self) -> TestResult:
         """Critère 4.11: Média temporel contrôlable au clavier."""
         media = self.soup.find_all(['video', 'audio'])
-        if not media:
-            return TestResult("4.11", Status.NOT_APPLICABLE, [], "Aucun média présent sur la page", "", 0.70)
+        media_iframes = self._find_media_iframes()
+
+        if not media and not media_iframes:
+            return TestResult("4.11", Status.NOT_APPLICABLE, [], "Aucun média temporel présent sur la page", "", 0.70)
 
         issues = []
         for m in media:
             if not m.has_attr('controls'):
                 issues.append("Média sans attribut controls")
+
+        if media_iframes:
+            issues.append("VÉRIFICATION MANUELLE: Vérifier contrôles clavier des médias intégrés (iframe)")
 
         if issues:
             return TestResult("4.11", Status.NON_COMPLIANT, issues,

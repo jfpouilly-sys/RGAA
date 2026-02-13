@@ -95,6 +95,19 @@ class ContentDetector:
 
     def detect_media(self) -> Dict[str, Any]:
         """Detect presence of temporal and non-temporal media."""
+        # Detect media iframes (YouTube, Vimeo, Dailymotion, etc.)
+        all_iframes = self.soup.select('iframe')
+        media_iframes = []
+        media_iframe_pattern = re.compile(
+            r'youtube|youtu\.be|vimeo|dailymotion|twitch|soundcloud|spotify|deezer|bandcamp|'
+            r'vidyard|wistia|brightcove|jwplatform|player\.',
+            re.I
+        )
+        for iframe in all_iframes:
+            src = iframe.get('src', '') or iframe.get('data-src', '') or ''
+            if media_iframe_pattern.search(src):
+                media_iframes.append(iframe)
+
         elements = {
             'video': self.soup.select('video'),
             'audio': self.soup.select('audio'),
@@ -103,7 +116,8 @@ class ContentDetector:
                 'object[type="application/x-shockwave-flash"]'
             ),
             'embed_media': self.soup.select('embed[type^="video/"], embed[type^="audio/"]'),
-            'bgsound': self.soup.select('bgsound')
+            'bgsound': self.soup.select('bgsound'),
+            'media_iframes': media_iframes
         }
 
         has_temporal_media = any(len(v) > 0 for v in elements.values())
@@ -143,9 +157,24 @@ class ContentDetector:
                 if table.select('[colspan], [rowspan], [headers]'):
                     complex_tables.append(table)
             else:
-                # Heuristic: if no th, probably layout
-                if table.select('th'):
+                # Heuristic: tables without <th> but with multiple data rows
+                # are likely data tables (missing proper headers = accessibility issue)
+                rows = table.select('tr')
+                cells = table.select('td')
+                has_caption = bool(table.select('caption'))
+                has_summary = bool(table.get('summary'))
+                has_scope = bool(table.select('[scope]'))
+                has_headers_attr = bool(table.select('[headers]'))
+
+                # Consider as data table if it has structured content:
+                # - has caption or summary (author intended it as data table)
+                # - has scope or headers attributes
+                # - has multiple rows with multiple cells (looks like tabular data)
+                if (has_caption or has_summary or has_scope or has_headers_attr or
+                        (len(rows) >= 2 and len(cells) >= 4)):
                     data_tables.append(table)
+                    if table.select('[colspan], [rowspan], [headers]'):
+                        complex_tables.append(table)
                 else:
                     layout_tables.append(table)
 
