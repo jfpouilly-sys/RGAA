@@ -19,3 +19,9 @@ pandas>=2.0.0
 
 # XLSX File Handling
 openpyxl>=3.1.0
+
+# Criterion 10.7 - Focus visibility testing (headless browser)
+playwright>=1.40.0
+
+# ODS file updates (alternative to odfpy for criterion 10.7)
+pyexcel-ods3>=0.6.0
