@@ -4,6 +4,7 @@ ODS Audit Analyzer - Integrates ODS handler with automated testing.
 
 Connects the ODS file format with our automated accessibility tests.
 Supports full RGAA 4.1.2 testing with all 106 criteria.
+Optionally enhances criterion 10.7 with Playwright-based focus testing.
 """
 
 import csv
@@ -15,6 +16,14 @@ from .analyzer import AnalyseurRGAA, ResultatTest
 from .crawler import Crawler
 from .config import get_config
 from .full_rgaa_tester import FullRGAATester, WebPageAnalyzer, TestResult
+
+# Optional Playwright-based focus testing for criterion 10.7
+try:
+    from criterion_10_7.focus_tester import FocusTester, PageFocusResult
+    from criterion_10_7.constants import FocusStatus
+    PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    PLAYWRIGHT_AVAILABLE = False
 
 
 class ODSAuditAnalyzer:
@@ -35,6 +44,8 @@ class ODSAuditAnalyzer:
         self.crawler = Crawler(config)
         self.full_rgaa_mode = full_rgaa_mode
         self.output_dir = "."  # Default output directory
+        self.focus_test_enabled = False  # Playwright focus testing for 10.7
+        self._focus_tester = None  # Shared FocusTester instance
 
     def analyze_page(self, page_id: str, run_automated_tests: bool = True) -> Optional[PageAudit]:
         """
@@ -266,6 +277,12 @@ class ODSAuditAnalyzer:
                 'comments': result.comments or result.manual_check
             }
 
+        # Enhance criterion 10.7 with Playwright dynamic analysis if enabled
+        if self.focus_test_enabled and PLAYWRIGHT_AVAILABLE:
+            focus_result = self._run_focus_test(url)
+            if focus_result:
+                results["10.7"] = focus_result
+
         # Log summary
         if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
             summary = tester.get_summary(test_results)
@@ -281,6 +298,161 @@ class ODSAuditAnalyzer:
                 )
 
         return results
+
+    def start_focus_tester(self):
+        """
+        Start the shared Playwright browser for focus testing.
+        Call this before analyzing pages when focus_test_enabled is True.
+        The browser stays open for all pages, avoiding repeated launch overhead.
+        """
+        if not PLAYWRIGHT_AVAILABLE:
+            if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
+                self.crawler._callback_log(
+                    "⚠️ Playwright non disponible — test focus 10.7 désactivé. "
+                    "Installer avec: pip install playwright && playwright install chromium"
+                )
+            return False
+
+        try:
+            self._focus_tester = FocusTester(headless=True)
+            self._focus_tester.__enter__()
+            if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
+                self.crawler._callback_log(
+                    "🔎 Navigateur Playwright démarré pour test focus 10.7"
+                )
+            return True
+        except Exception as e:
+            if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
+                self.crawler._callback_log(
+                    f"⚠️ Impossible de démarrer Playwright: {e}"
+                )
+            self._focus_tester = None
+            return False
+
+    def stop_focus_tester(self):
+        """Stop the shared Playwright browser."""
+        if self._focus_tester:
+            try:
+                self._focus_tester.__exit__(None, None, None)
+            except Exception:
+                pass
+            self._focus_tester = None
+
+    def _run_focus_test(self, url: str) -> Optional[Dict]:
+        """
+        Run Playwright-based focus visibility test for criterion 10.7.
+
+        Uses the shared FocusTester browser instance to analyze computed
+        styles before/after focus on each focusable element.
+
+        Args:
+            url: URL to test
+
+        Returns:
+            Dict compatible with ODS handler, or None if test failed
+        """
+        if not self._focus_tester:
+            # No shared instance — try creating a temporary one
+            try:
+                with FocusTester(headless=True) as temp_tester:
+                    return self._execute_focus_test(temp_tester, url)
+            except Exception as e:
+                if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
+                    self.crawler._callback_log(
+                        f"⚠️ Test focus 10.7 échoué: {e}"
+                    )
+                return None
+        else:
+            return self._execute_focus_test(self._focus_tester, url)
+
+    def _execute_focus_test(self, tester: 'FocusTester', url: str) -> Optional[Dict]:
+        """
+        Execute the focus test and convert result to ODS-compatible dict.
+
+        Args:
+            tester: FocusTester instance with active browser
+            url: URL to test
+
+        Returns:
+            Dict with status/modifications/comments, or None on error
+        """
+        log = None
+        if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
+            log = self.crawler._callback_log
+
+        try:
+            if log:
+                log("   🔎 Test focus 10.7 (Playwright)...")
+
+            def progress_cb(msg, pct):
+                if log:
+                    log(f"      {msg}")
+
+            # page_id is not critical here — just for the result object
+            result = tester.test_page(url, "focus", progress_callback=progress_cb)
+
+            if log:
+                log(
+                    f"   🔎 Focus 10.7: {result.total_conforme}C / "
+                    f"{result.total_non_conforme}NC / "
+                    f"{result.total_a_verifier} à vérifier "
+                    f"(confiance: {result.confidence})"
+                )
+
+            # Convert FocusStatus to ODS Status
+            status_map = {
+                FocusStatus.CONFORME: Status.COMPLIANT,
+                FocusStatus.NON_CONFORME: Status.NON_COMPLIANT,
+                FocusStatus.NON_APPLICABLE: Status.NOT_APPLICABLE,
+                FocusStatus.A_VERIFIER: Status.NOT_TESTED,
+            }
+            ods_status = status_map.get(
+                result.suggested_status, Status.NOT_TESTED
+            )
+
+            # Build modifications text
+            prefix = "[FOCUS-AUTO]" if result.confidence == "haute" else "[FOCUS-PARTIEL]"
+            modifications = (
+                f"{prefix} {result.details}. "
+                f"Éléments analysés: {result.total_visible}, "
+                f"C={result.total_conforme}, NC={result.total_non_conforme}, "
+                f"À vérifier={result.total_a_verifier}."
+            )
+
+            # Build detailed comments with NC elements
+            comments_parts = []
+            nc_elements = [
+                e for e in result.elements
+                if e.status == FocusStatus.NON_CONFORME
+            ]
+            if nc_elements:
+                comments_parts.append(
+                    f"NC: {', '.join(e.identifier for e in nc_elements[:5])}"
+                )
+            av_elements = [
+                e for e in result.elements
+                if e.status == FocusStatus.A_VERIFIER
+            ]
+            if av_elements:
+                comments_parts.append(
+                    f"À vérifier: {len(av_elements)} élément(s)"
+                )
+            if result.stylesheet_analysis.get('global_outline_none'):
+                comments_parts.append(
+                    "ALERTE: règle globale outline:none détectée"
+                )
+            comments = "; ".join(comments_parts) if comments_parts else ""
+
+            return {
+                'status': ods_status,
+                'modifications': modifications,
+                'comments': comments
+            }
+
+        except Exception as e:
+            if log:
+                log(f"   ⚠️ Erreur test focus 10.7: {e}")
+            return None
 
     def _run_section2_tests(self, html: str, url: str) -> Dict:
         """
