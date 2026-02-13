@@ -289,12 +289,15 @@ class ODSAuditAnalyzer:
         focus_10_7_status = "non demandé"
         if self.focus_test_enabled:
             if PLAYWRIGHT_AVAILABLE:
-                focus_result = self._run_focus_test(url)
+                focus_result, focus_error = self._run_focus_test(url)
                 if focus_result:
                     results["10.7"] = focus_result
                     focus_10_7_status = f"exécuté ({focus_result['status'].value})"
                 else:
-                    focus_10_7_status = "exécuté mais erreur (résultat statique conservé)"
+                    focus_10_7_status = (
+                        f"erreur — {focus_error}. "
+                        f"Résultat statique conservé pour 10.7"
+                    )
             else:
                 focus_10_7_status = f"indisponible — {PLAYWRIGHT_IMPORT_ERROR}"
                 if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
@@ -360,10 +363,18 @@ class ODSAuditAnalyzer:
                 )
             return True
         except Exception as e:
+            error_msg = str(e)
             if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
                 self.crawler._callback_log(
-                    f"⚠️ Impossible de démarrer Playwright: {e}"
+                    f"⚠️ Impossible de démarrer Playwright: {error_msg}"
                 )
+                if "chromium" in error_msg.lower() or "executable" in error_msg.lower() or "browser" in error_msg.lower():
+                    self.crawler._callback_log(
+                        "   → Le navigateur Chromium n'est probablement pas installé."
+                    )
+                    self.crawler._callback_log(
+                        "   → Exécuter: playwright install chromium"
+                    )
             self._focus_tester = None
             return False
 
@@ -376,7 +387,7 @@ class ODSAuditAnalyzer:
                 pass
             self._focus_tester = None
 
-    def _run_focus_test(self, url: str) -> Optional[Dict]:
+    def _run_focus_test(self, url: str) -> tuple:
         """
         Run Playwright-based focus visibility test for criterion 10.7.
 
@@ -387,7 +398,8 @@ class ODSAuditAnalyzer:
             url: URL to test
 
         Returns:
-            Dict compatible with ODS handler, or None if test failed
+            Tuple (result_dict, error_message).
+            result_dict is None on error, error_message is "" on success.
         """
         if not self._focus_tester:
             # No shared instance — try creating a temporary one
@@ -395,15 +407,19 @@ class ODSAuditAnalyzer:
                 with FocusTester(headless=True) as temp_tester:
                     return self._execute_focus_test(temp_tester, url)
             except Exception as e:
+                error_msg = str(e)
                 if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
                     self.crawler._callback_log(
-                        f"⚠️ Test focus 10.7 échoué: {e}"
+                        f"   ⚠️ Test focus 10.7 échoué (lancement navigateur): {error_msg}"
                     )
-                return None
+                    self.crawler._callback_log(
+                        "      → Avez-vous exécuté: playwright install chromium ?"
+                    )
+                return None, error_msg
         else:
             return self._execute_focus_test(self._focus_tester, url)
 
-    def _execute_focus_test(self, tester: 'FocusTester', url: str) -> Optional[Dict]:
+    def _execute_focus_test(self, tester: 'FocusTester', url: str) -> tuple:
         """
         Execute the focus test and convert result to ODS-compatible dict.
 
@@ -412,7 +428,8 @@ class ODSAuditAnalyzer:
             url: URL to test
 
         Returns:
-            Dict with status/modifications/comments, or None on error
+            Tuple (result_dict, error_message).
+            result_dict is None on error, error_message is "" on success.
         """
         log = None
         if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
@@ -485,12 +502,13 @@ class ODSAuditAnalyzer:
                 'status': ods_status,
                 'modifications': modifications,
                 'comments': comments
-            }
+            }, ""
 
         except Exception as e:
+            error_msg = str(e)
             if log:
-                log(f"   ⚠️ Erreur test focus 10.7: {e}")
-            return None
+                log(f"   ⚠️ Erreur test focus 10.7: {error_msg}")
+            return None, error_msg
 
     def _run_section2_tests(self, html: str, url: str) -> Dict:
         """
