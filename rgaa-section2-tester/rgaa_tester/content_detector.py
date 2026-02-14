@@ -122,10 +122,38 @@ class ContentDetector:
 
         has_temporal_media = any(len(v) > 0 for v in elements.values())
 
-        # Non-temporal media (interactive Flash, applets, etc.)
-        non_temporal = self.soup.select(
+        # Non-temporal media: includes canvas, object/embed with image types,
+        # and generic object/embed tags (which may contain dynamic media)
+        non_temporal_explicit = self.soup.select(
             'object[type="application/x-shockwave-flash"]:not([data*="video"]), '
             'embed[type="application/x-shockwave-flash"]:not([src*="video"])'
+        )
+
+        # Enhanced non-temporal detection: canvas and object/embed with image types
+        canvas_elements = self.soup.select('canvas')
+        object_image = self.soup.select('object[type^="image/"]')
+        embed_image = self.soup.select('embed[type^="image/"]')
+
+        # Also detect generic object/embed tags without explicit media type
+        # (they may load media content dynamically, e.g. via data or src attributes)
+        all_objects = self.soup.select('object')
+        all_embeds = self.soup.select('embed')
+        generic_objects = [
+            o for o in all_objects
+            if o.get('data') and not o.get('type', '').startswith(('video/', 'audio/'))
+        ]
+        generic_embeds = [
+            e for e in all_embeds
+            if e.get('src') and not e.get('type', '').startswith(('video/', 'audio/'))
+        ]
+
+        has_non_temporal = (
+            len(non_temporal_explicit) > 0 or
+            len(canvas_elements) > 0 or
+            len(object_image) > 0 or
+            len(embed_image) > 0 or
+            len(generic_objects) > 0 or
+            len(generic_embeds) > 0
         )
 
         # Autoplay media
@@ -133,9 +161,12 @@ class ContentDetector:
 
         return {
             'temporal_present': has_temporal_media,
-            'non_temporal_present': len(non_temporal) > 0,
+            'non_temporal_present': has_non_temporal,
             'autoplay_present': len(autoplay_media) > 0,
             'elements': elements,
+            'canvas': canvas_elements,
+            'object_image': object_image,
+            'embed_image': embed_image,
             'count': sum(len(v) for v in elements.values())
         }
 

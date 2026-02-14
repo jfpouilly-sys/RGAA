@@ -109,12 +109,62 @@ Exemple de configuration :
 }
 ```
 
+## Detection des medias multimedias
+
+Le module `media_detector.py` fournit une detection robuste de tous les elements multimedias presents sur une page web, conformement au RGAA 4.1.2 Section 4.
+
+### Elements detectes
+
+- `<video>` - Videos HTML5
+- `<audio>` - Audio HTML5
+- `<object>` - Objets embarques (Flash, etc.)
+- `<embed>` - Elements embarques
+- `<canvas>` - Canvas HTML5
+- `<svg>` - Images vectorielles
+- `<bgsound>` - Sons d'arriere-plan (obsolete)
+
+### Utilisation
+
+```python
+from media_detector import MediaDetector
+
+# Dans votre fonction d'audit
+detector = MediaDetector()
+media_data = await detector.detect_all_media(page)
+
+# Verifier la presence de medias
+if detector.has_media_elements(media_data):
+    print(detector.get_media_summary(media_data))
+
+# Categoriser pour l'applicabilite RGAA
+categories = detector.categorize_media_types(media_data)
+if categories['has_temporal_media']:
+    # Tester les criteres 4.1, 4.2, 4.3, etc.
+    pass
+```
+
+### Gestion des cas speciaux
+
+- **Chargement dynamique** : Attend `networkidle` + 1s pour capturer les medias charges via JS
+- **Elements masques** : Detecte meme les medias avec `display:none` ou `visibility:hidden`
+- **Attributs d'accessibilite** : Capture tous les attributs ARIA pour l'analyse
+
+### Generation automatique du fichier audit.xlsx
+
+Lorsque l'analyse est basee sur un fichier XLSX/ODS, le script `populate_xlsx_audit.py`
+est automatiquement appele a la fin de l'analyse de toutes les pages pour generer un
+fichier audit complet (`*_audit_complete.xlsx`) base sur le fichier d'entree et les
+resultats CSV generes.
+
 ## Structure du projet
 
 ```
 rgaa-section2-tester/
-├── main.py                    # Point d'entrée
-├── requirements.txt           # Dépendances
+├── main.py                    # Point d'entree
+├── media_detector.py          # Detection multimedia Playwright (RGAA Section 4)
+├── test_media_detector.py     # Tests unitaires du detecteur multimedia
+├── populate_xlsx_audit.py     # Generation audit XLSX a partir des CSV
+├── requirements.txt           # Dependances
 ├── config.json               # Configuration
 ├── README.md                 # Documentation
 ├── INSTALLATION.md           # Guide d'installation
@@ -123,10 +173,17 @@ rgaa-section2-tester/
 │   ├── config.py             # Gestion de la configuration
 │   ├── utils.py              # Fonctions utilitaires
 │   ├── analyzer.py           # Analyseur RGAA
+│   ├── content_detector.py   # Detection automatique NA
+│   ├── full_rgaa_tester.py   # Testeur 106 criteres RGAA
+│   ├── ods_analyzer.py       # Integration ODS/XLSX avec tests
+│   ├── ods_handler.py        # Lecture/ecriture fichiers ODS/XLSX
+│   ├── ods_gui.py            # Interface graphique audit ODS
+│   ├── ods_models.py         # Modeles de donnees audit
 │   ├── crawler.py            # Crawler web
-│   ├── report_generator.py   # Générateur de rapports
+│   ├── report_generator.py   # Generateur de rapports
 │   └── gui.py                # Interface graphique
-└── reports/                  # Rapports générés
+├── criterion_10_7/           # Test focus visibilite (Playwright)
+└── reports/                  # Rapports generes
 ```
 
 ## Rapports générés
