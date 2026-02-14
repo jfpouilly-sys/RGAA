@@ -151,24 +151,28 @@ class ODSAuditFrame(ttk.Frame):
         self.pages_tree.bind("<Double-1>", lambda e: self.analyze_selected_page())
 
     def _create_options_section(self):
-        """Create options section for parallel analysis."""
+        """Create options section for parallel analysis and focus testing."""
         options_frame = ttk.LabelFrame(self, text="⚙️ Options d'analyse", padding=10)
         options_frame.pack(fill="x", padx=10, pady=5)
+
+        # Row 1: Parallel analysis
+        row1 = ttk.Frame(options_frame)
+        row1.pack(fill="x")
 
         # Parallel analysis checkbox
         self.parallel_enabled = tk.BooleanVar(value=False)
         parallel_check = ttk.Checkbutton(
-            options_frame,
+            row1,
             text="Analyse parallèle",
             variable=self.parallel_enabled
         )
         parallel_check.pack(side="left", padx=5)
 
         # Number of workers
-        ttk.Label(options_frame, text="Nombre de threads:").pack(side="left", padx=(20, 5))
+        ttk.Label(row1, text="Nombre de threads:").pack(side="left", padx=(20, 5))
         self.parallel_workers = tk.IntVar(value=4)
         workers_spinbox = ttk.Spinbox(
-            options_frame,
+            row1,
             from_=2,
             to=16,
             width=5,
@@ -178,9 +182,37 @@ class ODSAuditFrame(ttk.Frame):
 
         # Info label
         ttk.Label(
-            options_frame,
+            row1,
             text="(Recommandé: 4-8 pour machines puissantes)",
             foreground="gray"
+        ).pack(side="left", padx=10)
+
+        # Row 2: Focus test 10.7 with Playwright
+        row2 = ttk.Frame(options_frame)
+        row2.pack(fill="x", pady=(5, 0))
+
+        self.focus_test_enabled = tk.BooleanVar(value=False)
+        focus_check = ttk.Checkbutton(
+            row2,
+            text="Test focus 10.7 (Playwright)",
+            variable=self.focus_test_enabled
+        )
+        focus_check.pack(side="left", padx=5)
+
+        # Check if Playwright is available
+        try:
+            from criterion_10_7.focus_tester import FocusTester
+            focus_info_text = "Analyse dynamique des styles CSS de focus via navigateur headless"
+            focus_info_color = "gray"
+        except ImportError:
+            focus_info_text = "Playwright non installé (pip install playwright && playwright install chromium)"
+            focus_info_color = "red"
+            focus_check.config(state="disabled")
+
+        ttk.Label(
+            row2,
+            text=focus_info_text,
+            foreground=focus_info_color
         ).pack(side="left", padx=10)
 
     def _create_actions_section(self):
@@ -515,8 +547,17 @@ class ODSAuditFrame(ttk.Frame):
         # Update output directory for CSV files
         self._update_analyzer_output_dir()
 
+        # Enable/disable focus testing based on GUI checkbox
+        focus_enabled = self.focus_test_enabled.get()
+        if self.audit_analyzer:
+            self.audit_analyzer.focus_test_enabled = focus_enabled
+
         # Create per-page logger
         page_logger, page_log_file = self._make_page_logger(page_id)
+
+        # Start Playwright browser if focus testing enabled
+        if focus_enabled and self.audit_analyzer:
+            self.audit_analyzer.start_focus_tester()
 
         try:
             # Get page info
@@ -566,10 +607,16 @@ class ODSAuditFrame(ttk.Frame):
             page_logger(f"Détails: {traceback.format_exc()}")
             self.after(0, lambda: messagebox.showerror("Erreur", f"Erreur lors de l'analyse:\n{str(e)}"))
         finally:
+            # Stop Playwright browser if it was started
+            if focus_enabled and self.audit_analyzer:
+                self.audit_analyzer.stop_focus_tester()
             self._close_page_logger(page_log_file)
 
     def _show_page_analysis_complete(self, page_id: str, stats: dict):
         """Show page analysis completion message."""
+        # Focus 10.7 status info
+        focus_info = self._get_focus_status_info()
+
         message = (
             f"Analyse de {page_id} terminée!\n\n"
             f"📊 Résultats:\n"
@@ -577,6 +624,7 @@ class ODSAuditFrame(ttk.Frame):
             f"  • Non conformes (NC): {stats['non_compliant']}\n"
             f"  • Non applicables (NA): {stats['not_applicable']}\n"
             f"  • Non testés (NT): {stats['not_tested']}\n\n"
+            f"🔎 Critère 10.7 (focus): {focus_info}\n\n"
             f"Les résultats ont été sauvegardés."
         )
         messagebox.showinfo("Analyse terminée", message)
@@ -600,6 +648,8 @@ class ODSAuditFrame(ttk.Frame):
 
     def _analyze_all_pages_thread(self):
         """Analyze all pages in a separate thread."""
+        focus_enabled = self.focus_test_enabled.get()
+
         try:
             parallel_enabled = self.parallel_enabled.get()
             num_workers = self.parallel_workers.get()
@@ -608,13 +658,23 @@ class ODSAuditFrame(ttk.Frame):
             self._update_analyzer_output_dir()
             output_dir = self._get_output_dir()
 
+            # Enable focus testing on analyzer
+            if self.audit_analyzer:
+                self.audit_analyzer.focus_test_enabled = focus_enabled
+
             self.log("=" * 50)
             if parallel_enabled:
                 self.log(f"Début de l'analyse parallèle ({num_workers} threads)...")
             else:
                 self.log("Début de l'analyse séquentielle...")
+            if focus_enabled:
+                self.log("🔎 Test focus 10.7 (Playwright) activé")
             self.log(f"📂 Répertoire de sortie: {output_dir}")
             self.log("=" * 50)
+
+            # Start shared Playwright browser for focus testing (sequential mode)
+            if focus_enabled and not parallel_enabled and self.audit_analyzer:
+                self.audit_analyzer.start_focus_tester()
 
             # Set up crawler logging callback
             if self.audit_analyzer and self.audit_analyzer.crawler:
@@ -664,6 +724,7 @@ class ODSAuditFrame(ttk.Frame):
             self.log(f"   - Non conformes (NC): {stats['non_compliant']}")
             self.log(f"   - Non applicables (NA): {stats['not_applicable']}")
             self.log(f"   - Non testés (NT): {stats['not_tested']}")
+            self.log(f"   - Critère 10.7 (focus): {self._get_focus_status_info()}")
 
             # Auto-save results
             try:
@@ -681,6 +742,10 @@ class ODSAuditFrame(ttk.Frame):
             import traceback
             self.log(f"Détails: {traceback.format_exc()}")
             self.after(0, lambda: messagebox.showerror("Erreur", f"Erreur lors de l'analyse:\n{str(e)}"))
+        finally:
+            # Stop shared Playwright browser
+            if focus_enabled and self.audit_analyzer:
+                self.audit_analyzer.stop_focus_tester()
 
     def _analyze_pages_parallel(self, pages: list, num_workers: int) -> dict:
         """
@@ -732,11 +797,21 @@ class ODSAuditFrame(ttk.Frame):
                 thread_analyzer.full_rgaa_mode = True
                 thread_analyzer.analyseur = None
                 thread_analyzer.output_dir = self._get_output_dir()
+                thread_analyzer.focus_test_enabled = self.focus_test_enabled.get()
+                thread_analyzer._focus_tester = None
 
-                # Analyze the page
-                thread_analyzer.analyze_page(page_id, run_automated_tests=True)
+                # Start thread-local Playwright browser if focus testing enabled
+                if thread_analyzer.focus_test_enabled:
+                    thread_analyzer.start_focus_tester()
 
-                return {'page_id': page_id, 'success': True}
+                try:
+                    # Analyze the page
+                    thread_analyzer.analyze_page(page_id, run_automated_tests=True)
+                    return {'page_id': page_id, 'success': True}
+                finally:
+                    # Stop thread-local Playwright browser
+                    if thread_analyzer.focus_test_enabled:
+                        thread_analyzer.stop_focus_tester()
 
             except Exception as e:
                 page_logger(f"⚠️ Erreur {page_id}: {str(e)}")
@@ -759,6 +834,8 @@ class ODSAuditFrame(ttk.Frame):
 
     def _show_analysis_complete(self, stats: dict):
         """Show analysis completion message."""
+        focus_info = self._get_focus_status_info()
+
         message = (
             f"Analyse de toutes les pages terminée!\n\n"
             f"📊 Résultats:\n"
@@ -766,9 +843,35 @@ class ODSAuditFrame(ttk.Frame):
             f"  • Non conformes (NC): {stats['non_compliant']}\n"
             f"  • Non applicables (NA): {stats['not_applicable']}\n"
             f"  • Non testés (NT): {stats['not_tested']}\n\n"
+            f"🔎 Critère 10.7 (focus): {focus_info}\n\n"
             f"Les résultats ont été sauvegardés automatiquement."
         )
         messagebox.showinfo("Analyse terminée", message)
+
+    def _get_focus_status_info(self) -> str:
+        """Return a human-readable string about focus 10.7 test status."""
+        from .ods_analyzer import PLAYWRIGHT_AVAILABLE, PLAYWRIGHT_IMPORT_ERROR
+
+        focus_enabled = self.focus_test_enabled.get()
+
+        if focus_enabled and PLAYWRIGHT_AVAILABLE:
+            return "analyse dynamique Playwright exécutée"
+        elif focus_enabled and not PLAYWRIGHT_AVAILABLE:
+            return (
+                f"demandé mais Playwright indisponible ({PLAYWRIGHT_IMPORT_ERROR}). "
+                f"Installer: pip install playwright && playwright install chromium"
+            )
+        elif not focus_enabled and PLAYWRIGHT_AVAILABLE:
+            return (
+                "analyse statique uniquement (cocher 'Test focus 10.7' "
+                "pour activer l'analyse Playwright)"
+            )
+        else:
+            return (
+                f"analyse statique uniquement — Playwright non installé "
+                f"({PLAYWRIGHT_IMPORT_ERROR}). "
+                f"Installer: pip install playwright && playwright install chromium"
+            )
 
     def save_results(self):
         """Save the audit results to ODS file."""

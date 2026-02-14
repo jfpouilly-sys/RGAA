@@ -637,6 +637,20 @@ class FullRGAATester:
     # THÈME 4: MULTIMÉDIA (Critères 4.1 - 4.13)
     # ========================================================================
 
+    def _find_media_iframes(self) -> list:
+        """Find iframes embedding video/audio platforms (YouTube, Vimeo, etc.)."""
+        media_iframes = []
+        media_pattern = re.compile(
+            r'youtube|youtu\.be|vimeo|dailymotion|twitch|soundcloud|spotify|deezer|bandcamp|'
+            r'vidyard|wistia|brightcove|jwplatform|player\.',
+            re.I
+        )
+        for iframe in self.soup.find_all('iframe'):
+            src = iframe.get('src', '') or iframe.get('data-src', '') or ''
+            if media_pattern.search(src):
+                media_iframes.append(iframe)
+        return media_iframes
+
     def test_4_1(self) -> TestResult:
         """Critère 4.1: Média temporel avec transcription ou audiodescription."""
         issues = []
@@ -645,9 +659,9 @@ class FullRGAATester:
         audios = self.soup.find_all('audio')
         media_objects = self.soup.find_all('object', type=re.compile(r'video/|audio/', re.I))
         embeds = self.soup.find_all('embed', type=re.compile(r'video/|audio/', re.I))
-        youtube_iframes = self.soup.find_all('iframe', src=re.compile(r'youtube|vimeo|dailymotion', re.I))
+        media_iframes = self._find_media_iframes()
 
-        all_media = videos + audios + media_objects + embeds + youtube_iframes
+        all_media = videos + audios + media_objects + embeds + media_iframes
 
         for media in all_media:
             tracks = media.find_all('track') if hasattr(media, 'find_all') else []
@@ -696,7 +710,7 @@ class FullRGAATester:
         """Critère 4.3: Sous-titres synchronisés pour vidéos."""
         issues = []
         videos = self.soup.find_all('video')
-        video_iframes = self.soup.find_all('iframe', src=re.compile(r'youtube|vimeo', re.I))
+        video_iframes = self._find_media_iframes()
 
         for video in videos:
             tracks = video.find_all('track')
@@ -706,7 +720,7 @@ class FullRGAATester:
                 issues.append(f"Vidéo sans sous-titres: {src}")
 
         if video_iframes:
-            issues.append("VÉRIFICATION MANUELLE: Vérifier sous-titres des vidéos YouTube/Vimeo")
+            issues.append("VÉRIFICATION MANUELLE: Vérifier sous-titres des vidéos intégrées (iframe)")
 
         if not videos and not video_iframes:
             return TestResult("4.3", Status.NOT_APPLICABLE, [], "Aucune vidéo présente sur la page", "", 0.90)
@@ -719,7 +733,7 @@ class FullRGAATester:
     def test_4_4(self) -> TestResult:
         """Critère 4.4: Sous-titres pertinents pour médias synchronisés."""
         videos = self.soup.find_all('video')
-        video_iframes = self.soup.find_all('iframe', src=re.compile(r'youtube|vimeo', re.I))
+        video_iframes = self._find_media_iframes()
 
         if not videos and not video_iframes:
             return TestResult("4.4", Status.NOT_APPLICABLE, [], "Aucune vidéo présente sur la page", "", 0.60)
@@ -778,8 +792,10 @@ class FullRGAATester:
     def test_4_7(self) -> TestResult:
         """Critère 4.7: Identification des médias temporels."""
         media = self.soup.find_all(['video', 'audio'])
-        if not media:
-            return TestResult("4.7", Status.NOT_APPLICABLE, [], "Aucun média présent sur la page temporel", "", 0.70)
+        media_iframes = self._find_media_iframes()
+
+        if not media and not media_iframes:
+            return TestResult("4.7", Status.NOT_APPLICABLE, [], "Aucun média temporel présent sur la page", "", 0.70)
 
         issues = []
         for m in media:
@@ -791,6 +807,12 @@ class FullRGAATester:
 
             if not has_label and not has_heading:
                 issues.append(f"Média <{m.name}> sans identification accessible")
+
+        for iframe in media_iframes:
+            has_label = iframe.get('aria-label') or iframe.get('aria-labelledby') or iframe.get('title')
+            if not has_label:
+                src = (iframe.get('src', '') or iframe.get('data-src', ''))[:50]
+                issues.append(f"Iframe média sans titre accessible: {src}")
 
         if issues:
             return TestResult("4.7", Status.NON_COMPLIANT, issues,
@@ -870,13 +892,18 @@ class FullRGAATester:
     def test_4_11(self) -> TestResult:
         """Critère 4.11: Média temporel contrôlable au clavier."""
         media = self.soup.find_all(['video', 'audio'])
-        if not media:
-            return TestResult("4.11", Status.NOT_APPLICABLE, [], "Aucun média présent sur la page", "", 0.70)
+        media_iframes = self._find_media_iframes()
+
+        if not media and not media_iframes:
+            return TestResult("4.11", Status.NOT_APPLICABLE, [], "Aucun média temporel présent sur la page", "", 0.70)
 
         issues = []
         for m in media:
             if not m.has_attr('controls'):
                 issues.append("Média sans attribut controls")
+
+        if media_iframes:
+            issues.append("VÉRIFICATION MANUELLE: Vérifier contrôles clavier des médias intégrés (iframe)")
 
         if issues:
             return TestResult("4.11", Status.NON_COMPLIANT, issues,
@@ -1861,29 +1888,174 @@ class FullRGAATester:
                               "", "Liens avec distinction visuelle", 0.50)
 
     def test_10_7(self) -> TestResult:
-        """Critère 10.7: Focus visible sur éléments recevant le focus."""
+        """Critère 10.7: Focus visible sur éléments recevant le focus.
+
+        Analyse statique (BeautifulSoup) :
+        - Détecte outline:none/0 en style inline sur éléments focusables
+        - Détecte les règles CSS :focus supprimant l'outline dans <style>
+        - Détecte les suppressions globales (* { outline: none })
+        - Vérifie la présence de styles compensatoires (box-shadow, border)
+        - Identifie les éléments focusables avec tabindex
+
+        Pour une analyse dynamique complète (computed styles, focus
+        programmatique), utiliser le module criterion_10_7/ avec Playwright.
+
+        Couverture automatisée : ~50% (statique uniquement).
+        Références WCAG : 2.4.7 Focus Visible (AA), 1.4.1 Use of Color (A)
+        Techniques : C15, F73, F78, G149, G165, G183, G195, SCR31
+        """
         issues = []
+        warnings = []
+        compensatory_detected = False
 
-        elements_no_outline = self.soup.find_all(style=re.compile(r'outline\s*:\s*(none|0)', re.I))
+        # Éléments focusables à vérifier
+        focusable_tags = ['a', 'button', 'input', 'select', 'textarea', 'summary']
 
+        # 1. Détection outline:none/0 en style inline sur éléments focusables
+        elements_no_outline = self.soup.find_all(
+            style=re.compile(r'outline\s*:\s*(none|0(?:px)?)\b', re.I)
+        )
         for elem in elements_no_outline:
-            if elem.name in ['a', 'button', 'input', 'select', 'textarea']:
-                issues.append(f"<{elem.name}> avec outline:none/0 en style inline")
+            is_focusable = (
+                elem.name in focusable_tags
+                or elem.get('tabindex') is not None
+                or (elem.name == 'a' and elem.get('href'))
+            )
+            if is_focusable:
+                style_val = elem.get('style', '')
+                # Vérifier si un style compensatoire est présent en inline
+                has_compensation = bool(re.search(
+                    r'(box-shadow|border)\s*:', style_val, re.I
+                ))
+                elem_id = self._get_element_identifier(elem)
+                if has_compensation:
+                    warnings.append(
+                        f"<{elem.name}>{elem_id} : outline supprimé en inline "
+                        f"mais style compensatoire détecté (à vérifier visuellement)"
+                    )
+                    compensatory_detected = True
+                else:
+                    issues.append(
+                        f"<{elem.name}>{elem_id} : outline:none/0 en style inline "
+                        f"sans compensation visible"
+                    )
+
+        # 2. Analyse des balises <style> pour les règles :focus
+        global_suppression = False
+        focus_suppression_rules = []
+        focus_compensatory_rules = []
 
         for style_tag in self.soup.find_all('style'):
             css_content = style_tag.get_text()
-            if ':focus' in css_content and 'outline' in css_content:
-                if 'outline:none' in css_content.replace(' ', '') or 'outline:0' in css_content.replace(' ', ''):
-                    issues.append("CSS avec :focus { outline: none } détecté")
 
+            # Détecter suppression globale (* { outline: none })
+            if re.search(
+                r'\*\s*\{[^}]*outline\s*:\s*(none|0(?:px)?)',
+                css_content, re.I
+            ):
+                global_suppression = True
+                issues.append(
+                    "Règle CSS globale de suppression de focus : "
+                    "* { outline: none/0 } — supprime l'indicateur de focus "
+                    "natif pour TOUS les éléments"
+                )
+
+            # Détecter :focus avec outline supprimé
+            focus_blocks = re.findall(
+                r'([^{]*:focus(?:-visible|-within)?[^{]*)\{([^}]*)\}',
+                css_content, re.I
+            )
+            for selector, props in focus_blocks:
+                selector = selector.strip()
+                props_clean = props.replace(' ', '').lower()
+
+                has_outline_suppression = bool(re.search(
+                    r'outline\s*:\s*(none|0(?:px)?)', props, re.I
+                ))
+                has_compensation = bool(re.search(
+                    r'(box-shadow|border-color|border-width|background-color'
+                    r'|text-decoration)\s*:',
+                    props, re.I
+                ))
+
+                if has_outline_suppression:
+                    if has_compensation:
+                        focus_compensatory_rules.append(selector)
+                        compensatory_detected = True
+                    else:
+                        focus_suppression_rules.append(selector)
+
+        for rule in focus_suppression_rules:
+            issues.append(
+                f"CSS :focus avec outline supprimé sans compensation : {rule}"
+            )
+
+        for rule in focus_compensatory_rules:
+            warnings.append(
+                f"CSS :focus avec outline supprimé mais compensation "
+                f"détectée : {rule} (à vérifier visuellement)"
+            )
+
+        # 3. Détecter les éléments avec tabindex (focusables personnalisés)
+        custom_focusable = self.soup.find_all(attrs={'tabindex': True})
+        tab_positive = [
+            e for e in custom_focusable
+            if e.get('tabindex', '').lstrip('-').isdigit()
+            and int(e.get('tabindex', '0')) > 0
+        ]
+        if tab_positive:
+            warnings.append(
+                f"{len(tab_positive)} élément(s) avec tabindex positif "
+                f"(modifie l'ordre de tabulation — vérifier le focus visible)"
+            )
+
+        # 4. Construction du résultat
+        all_details = []
         if issues:
-            return TestResult("10.7", Status.NON_COMPLIANT, issues,
-                              "; ".join(issues), "", 0.40,
-                              "Tester la navigation clavier pour vérifier visibilité du focus")
+            all_details.extend(issues)
+        if warnings:
+            all_details.extend(warnings)
+
+        manual_note = (
+            "Tester la navigation clavier (Tab) pour vérifier la "
+            "visibilité du focus sur chaque élément interactif. "
+            "Pour une analyse dynamique complète avec computed styles, "
+            "utiliser : python test_criterion_10_7.py"
+        )
+
+        if issues and not compensatory_detected:
+            return TestResult("10.7", Status.NON_COMPLIANT, issues + warnings,
+                              "; ".join(all_details), "", 0.50, manual_note)
+        elif issues and compensatory_detected:
+            return TestResult("10.7", Status.NON_COMPLIANT, issues + warnings,
+                              "; ".join(all_details),
+                              "Styles compensatoires détectés sur certains "
+                              "éléments mais d'autres n'ont aucune compensation",
+                              0.50, manual_note)
+        elif warnings and not issues:
+            return TestResult("10.7", Status.NOT_TESTED, warnings,
+                              "; ".join(warnings),
+                              "Styles de focus personnalisés détectés — "
+                              "vérification visuelle requise",
+                              0.50, manual_note)
         else:
             return TestResult("10.7", Status.NOT_TESTED, [],
-                              "Vérification manuelle de la visibilité du focus",
-                              "", 0.40)
+                              "Aucune suppression de focus détectée en "
+                              "analyse statique — vérification dynamique "
+                              "recommandée",
+                              "", 0.50, manual_note)
+
+    def _get_element_identifier(self, elem) -> str:
+        """Retourne un identifiant lisible pour un élément HTML."""
+        if elem.get('id'):
+            return f"#{elem['id']}"
+        if elem.get('class'):
+            classes = elem['class'][:2] if isinstance(elem['class'], list) else [elem['class']]
+            return f".{'.'.join(classes)}"
+        text = elem.get_text(strip=True)[:30]
+        if text:
+            return f"['{text}']"
+        return ""
 
     def test_10_8(self) -> TestResult:
         """Critère 10.8: Contenu caché visuellement reste accessible."""
