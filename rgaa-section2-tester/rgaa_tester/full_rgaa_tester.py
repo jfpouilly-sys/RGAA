@@ -126,19 +126,23 @@ class FullRGAATester:
         "13.10": "CONSULTATION", "13.11": "CONSULTATION", "13.12": "CONSULTATION"
     }
 
-    def __init__(self, analyzer: WebPageAnalyzer, use_content_detection: bool = True):
+    def __init__(self, analyzer: WebPageAnalyzer, use_content_detection: bool = True,
+                 media_detection_data: Optional[Dict[str, Any]] = None):
         """
         Initialise le testeur.
 
         Args:
-            analyzer: Instance de WebPageAnalyzer avec la page chargée
-            use_content_detection: Si True, utilise la détection de contenu pour marquer automatiquement les NA
+            analyzer: Instance de WebPageAnalyzer avec la page chargee
+            use_content_detection: Si True, utilise la detection de contenu pour marquer automatiquement les NA
+            media_detection_data: Donnees optionnelles de detection multimedia Playwright
+                                  (retournees par MediaDetector.detect_all_media())
         """
         self.analyzer = analyzer
         self.soup = analyzer.soup
         self.url = analyzer.url
         self.html = analyzer.html or ""
         self.use_content_detection = use_content_detection
+        self.media_detection_data = media_detection_data
 
         # Initialize content detector for automatic NA detection
         self.content_detector = ContentDetector(self.soup)
@@ -147,7 +151,75 @@ class FullRGAATester:
 
         if use_content_detection:
             self.detection_results = self.content_detector.detect_all()
+
+            # If Playwright media detection data is available, enhance the
+            # content detector's media results for more accurate NA detection
+            if media_detection_data:
+                self._enhance_media_detection(media_detection_data)
+
             self.auto_na_criteria = self.content_detector.get_na_criteria()
+
+    def _enhance_media_detection(self, media_data: Dict[str, Any]):
+        """
+        Enhance content detector media results with Playwright-based detection.
+
+        Playwright can detect dynamically loaded media elements that
+        BeautifulSoup's static analysis misses (JS-injected video/audio,
+        hidden elements, etc.).
+
+        Args:
+            media_data: Data from MediaDetector.detect_all_media()
+        """
+        if not self.detection_results or 'media' not in self.detection_results:
+            return
+
+        media_results = self.detection_results['media']
+
+        # If Playwright detected temporal media but static analysis didn't
+        pw_has_video = len(media_data.get('videos', [])) > 0
+        pw_has_audio = len(media_data.get('audios', [])) > 0
+        pw_has_temporal_objects = any(
+            obj.get('type', '').startswith(('video/', 'audio/', 'application/x-shockwave-flash'))
+            for obj in media_data.get('objects', [])
+        )
+        pw_has_temporal_embeds = any(
+            emb.get('type', '').startswith(('video/', 'audio/', 'application/x-shockwave-flash'))
+            for emb in media_data.get('embeds', [])
+        )
+
+        if pw_has_video or pw_has_audio or pw_has_temporal_objects or pw_has_temporal_embeds:
+            media_results['temporal_present'] = True
+
+        # If Playwright detected non-temporal media but static analysis didn't
+        pw_has_canvas = len(media_data.get('canvas', [])) > 0
+        pw_has_non_temporal_objects = any(
+            obj.get('type', '').startswith('image/')
+            for obj in media_data.get('objects', [])
+        )
+        pw_has_non_temporal_embeds = any(
+            emb.get('type', '').startswith('image/')
+            for emb in media_data.get('embeds', [])
+        )
+
+        if pw_has_canvas or pw_has_non_temporal_objects or pw_has_non_temporal_embeds:
+            media_results['non_temporal_present'] = True
+
+        # If Playwright detected autoplay media
+        pw_has_autoplay = (
+            any(vid.get('autoplay', False) for vid in media_data.get('videos', [])) or
+            any(aud.get('autoplay', False) for aud in media_data.get('audios', []))
+        )
+        if pw_has_autoplay:
+            media_results['autoplay_present'] = True
+
+        # Update the count to reflect enhanced detection
+        media_results['count'] = max(
+            media_results.get('count', 0),
+            media_data.get('total_count', 0)
+        )
+
+        # Store reference for use in Section 4 tests
+        media_results['_playwright_data'] = media_data
 
     # ========================================================================
     # THÈME 1: IMAGES (Critères 1.1 - 1.9)

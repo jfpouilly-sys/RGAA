@@ -236,13 +236,16 @@ class ODSAuditAnalyzer:
 
         return results
 
-    def _run_full_rgaa_tests(self, html: str, url: str) -> Dict:
+    def _run_full_rgaa_tests(self, html: str, url: str,
+                             media_detection_data: dict = None) -> Dict:
         """
         Run all 106 RGAA criteria tests.
 
         Args:
             html: HTML content of the page
             url: URL of the page
+            media_detection_data: Optional Playwright-based media detection data
+                                  from MediaDetector.detect_all_media()
 
         Returns:
             Dictionary with test results per criterion
@@ -253,8 +256,8 @@ class ODSAuditAnalyzer:
         analyzer = WebPageAnalyzer(url, html)
         analyzer.fetch()  # This will use the provided HTML
 
-        # Create full RGAA tester
-        tester = FullRGAATester(analyzer)
+        # Create full RGAA tester with optional media detection data
+        tester = FullRGAATester(analyzer, media_detection_data=media_detection_data)
 
         # Run all tests
         test_results = tester.run_all_tests()
@@ -615,8 +618,100 @@ class ODSAuditAnalyzer:
                 _log(f"⚠️ Erreur lors de l'analyse de {page_id}: {str(e)}")
                 # Continue with next page instead of stopping
 
-        # Return global statistics
-        return self.handler.calculate_synthesis()
+        # After all pages analyzed, generate complete audit.xlsx if input was xlsx/ods
+        stats = self.handler.calculate_synthesis()
+        self._populate_xlsx_audit(_log)
+        return stats
+
+    def _populate_xlsx_audit(self, log_callback=None):
+        """
+        Call populate_xlsx_audit to generate a complete audit.xlsx file
+        based on the input xlsx file and generated CSV results.
+
+        Only runs when the input file is xlsx or ods format.
+
+        Args:
+            log_callback: Optional callback for logging messages
+        """
+        def _log(msg):
+            if log_callback:
+                log_callback(msg)
+            else:
+                print(msg)
+
+        # Check if the input file is xlsx or ods
+        if not self.handler or not hasattr(self.handler, 'filepath'):
+            return
+
+        input_path = self.handler.filepath
+        ext = os.path.splitext(input_path)[1].lower()
+
+        if ext not in ['.xlsx', '.xlsm', '.xls', '.ods']:
+            return
+
+        try:
+            from pathlib import Path
+            _log("=" * 50)
+            _log("Generation du fichier audit.xlsx complet...")
+
+            # Import the populator
+            # The populate_xlsx_audit.py script is in the parent directory
+            script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            populate_module_path = os.path.join(script_dir, 'populate_xlsx_audit.py')
+
+            if not os.path.exists(populate_module_path):
+                _log(f"Script populate_xlsx_audit.py non trouve: {populate_module_path}")
+                return
+
+            # Import the module dynamically
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("populate_xlsx_audit", populate_module_path)
+            populate_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(populate_module)
+
+            # Find the xlsx template file
+            template_path = Path(input_path)
+
+            # Look for CSV files in the output directory
+            output_dir = self.output_dir or os.path.dirname(input_path)
+            csv_pattern = os.path.join(output_dir, "P*.csv")
+
+            import glob
+            csv_files = sorted(glob.glob(csv_pattern))
+            if not csv_files:
+                _log("Aucun fichier CSV genere - impossible de populer le fichier audit.xlsx")
+                return
+
+            _log(f"Fichiers CSV trouves: {len(csv_files)}")
+
+            # Determine output file path
+            output_xlsx = Path(output_dir) / f"{template_path.stem}_audit_complete.xlsx"
+
+            # Create populator and run
+            populator = populate_module.XLSXAuditPopulator(
+                xlsx_template=template_path,
+                output_xlsx=output_xlsx
+            )
+
+            # Load all CSV files
+            original_cwd = os.getcwd()
+            try:
+                os.chdir(output_dir)
+                num_loaded = populator.load_csv_files("P*.csv")
+            finally:
+                os.chdir(original_cwd)
+
+            if num_loaded > 0:
+                success = populator.update_xlsx_file()
+                if success:
+                    _log(f"Fichier audit complet genere: {output_xlsx}")
+                else:
+                    _log("Erreur lors de la mise a jour du fichier XLSX")
+            else:
+                _log("Aucun fichier CSV charge - generation du fichier audit.xlsx ignoree")
+
+        except Exception as e:
+            _log(f"Erreur lors de la generation du fichier audit.xlsx: {str(e)}")
 
     def generate_report_summary(self) -> str:
         """

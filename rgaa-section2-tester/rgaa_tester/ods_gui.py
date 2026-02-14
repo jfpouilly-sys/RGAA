@@ -733,6 +733,13 @@ class ODSAuditFrame(ttk.Frame):
             except Exception as save_error:
                 self.log(f"⚠️ Avertissement: Sauvegarde échouée - {str(save_error)}")
 
+            # Generate complete audit.xlsx from CSV results if input was xlsx/ods
+            if self.audit_analyzer:
+                try:
+                    self.audit_analyzer._populate_xlsx_audit(self.log)
+                except Exception as pop_error:
+                    self.log(f"⚠️ Erreur generation audit.xlsx: {str(pop_error)}")
+
             # Update UI and show completion message
             self.after(0, self.populate_pages_list)
             self.after(0, lambda: self._show_analysis_complete(stats))
