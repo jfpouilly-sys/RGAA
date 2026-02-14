@@ -34,8 +34,13 @@ def mode_graphique():
         from rgaa_tester.gui import lancer_application
         lancer_application()
     except ImportError as e:
+        module = getattr(e, 'name', None) or str(e)
         print(f"Erreur: Impossible de charger l'interface graphique: {e}")
-        print("Verifiez que tkinter est installe sur votre systeme.")
+        if 'tkinter' in str(e):
+            print("Verifiez que tkinter est installe sur votre systeme.")
+        else:
+            print(f"Module manquant: {module}")
+            print("Installez les dependances avec: pip install -r requirements.txt")
         sys.exit(1)
 
 
