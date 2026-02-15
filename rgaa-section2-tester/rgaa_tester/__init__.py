@@ -60,3 +60,10 @@ except ImportError:
         'run_full_rgaa_test',
         'ContentDetector'
     ]
+
+# Export image alt checker (optional, requires playwright)
+try:
+    from image_alt_checker import ImageAltChecker, audit_criterion_1_1, generate_ods_entries
+    __all__ += ['ImageAltChecker', 'audit_criterion_1_1', 'generate_ods_entries']
+except ImportError:
+    pass
