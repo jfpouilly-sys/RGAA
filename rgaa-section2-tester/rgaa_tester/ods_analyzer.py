@@ -33,6 +33,15 @@ try:
 except ImportError as _e:
     PLAYWRIGHT_IMPORT_ERROR = str(_e)
 
+# Optional Playwright-based image alt checking for criterion 1.1
+IMAGE_ALT_CHECKER_AVAILABLE = False
+IMAGE_ALT_CHECKER_IMPORT_ERROR = ""
+try:
+    from image_alt_checker import ImageAltChecker, audit_criterion_1_1
+    IMAGE_ALT_CHECKER_AVAILABLE = True
+except ImportError as _e:
+    IMAGE_ALT_CHECKER_IMPORT_ERROR = str(_e)
+
 
 class ODSAuditAnalyzer:
     """Integrates ODS handler with automated testing."""
@@ -54,6 +63,7 @@ class ODSAuditAnalyzer:
         self.output_dir = "."  # Default output directory
         self.focus_test_enabled = False  # Playwright focus testing for 10.7
         self._focus_tester = None  # Shared FocusTester instance
+        self.image_alt_test_enabled = False  # Playwright image alt testing for 1.1
 
     def analyze_page(self, page_id: str, run_automated_tests: bool = True) -> Optional[PageAudit]:
         """
@@ -323,6 +333,30 @@ class ODSAuditAnalyzer:
                     "ou utiliser --focus en CLI)"
                 )
 
+        # Enhance criterion 1.1 with Playwright dynamic analysis if enabled
+        image_alt_1_1_status = "non demandé"
+        if self.image_alt_test_enabled:
+            if IMAGE_ALT_CHECKER_AVAILABLE and PLAYWRIGHT_AVAILABLE:
+                alt_result, alt_error = self._run_image_alt_test(url)
+                if alt_result:
+                    results["1.1"] = alt_result
+                    image_alt_1_1_status = f"exécuté ({alt_result['status'].value})"
+                else:
+                    image_alt_1_1_status = (
+                        f"erreur — {alt_error}. "
+                        f"Résultat statique conservé pour 1.1"
+                    )
+            else:
+                if not IMAGE_ALT_CHECKER_AVAILABLE:
+                    image_alt_1_1_status = f"indisponible — {IMAGE_ALT_CHECKER_IMPORT_ERROR}"
+                else:
+                    image_alt_1_1_status = f"indisponible — {PLAYWRIGHT_IMPORT_ERROR}"
+        else:
+            if not IMAGE_ALT_CHECKER_AVAILABLE or not PLAYWRIGHT_AVAILABLE:
+                image_alt_1_1_status = "désactivé (Playwright non installé)"
+            else:
+                image_alt_1_1_status = "désactivé (non activé dans les options)"
+
         # Log summary
         if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
             summary = tester.get_summary(test_results)
@@ -339,6 +373,10 @@ class ODSAuditAnalyzer:
             # Always log criterion 10.7 focus test status
             self.crawler._callback_log(
                 f"  ↳ Critère 10.7 focus (Playwright): {focus_10_7_status}"
+            )
+            # Log criterion 1.1 image alt test status
+            self.crawler._callback_log(
+                f"  ↳ Critère 1.1 images (Playwright): {image_alt_1_1_status}"
             )
 
         return results
@@ -511,6 +549,105 @@ class ODSAuditAnalyzer:
             error_msg = str(e)
             if log:
                 log(f"   ⚠️ Erreur test focus 10.7: {error_msg}")
+            return None, error_msg
+
+    def _run_image_alt_test(self, url: str) -> tuple:
+        """
+        Run Playwright-based image alt text test for criterion 1.1.
+
+        Uses a temporary Playwright browser to analyze all image elements
+        and their accessible names according to RGAA algorithm.
+
+        Args:
+            url: URL to test
+
+        Returns:
+            Tuple (result_dict, error_message).
+            result_dict is None on error, error_message is "" on success.
+        """
+        import asyncio
+
+        log = None
+        if hasattr(self.crawler, '_callback_log') and self.crawler._callback_log:
+            log = self.crawler._callback_log
+
+        try:
+            if log:
+                log("   🔎 Test images 1.1 (Playwright)...")
+
+            async def _run():
+                from playwright.async_api import async_playwright
+                async with async_playwright() as pw:
+                    browser = await pw.chromium.launch(headless=True)
+                    page = await browser.new_page()
+                    await page.goto(url, wait_until='domcontentloaded', timeout=30000)
+                    audit_result = await audit_criterion_1_1(page)
+                    await browser.close()
+                    return audit_result
+
+            # Run async code from sync context
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop and loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    audit_result = pool.submit(
+                        lambda: asyncio.run(_run())
+                    ).result()
+            else:
+                audit_result = asyncio.run(_run())
+
+            if log:
+                summary = audit_result['results']['summary']
+                log(
+                    f"   🔎 Images 1.1: {summary['with_alternative']} avec alt / "
+                    f"{summary['without_alternative']} sans alt "
+                    f"(total: {summary['total_images']})"
+                )
+
+            # Convert to ODS-compatible status
+            status_str = audit_result['status']
+            status_map = {'C': Status.COMPLIANT, 'NC': Status.NON_COMPLIANT, 'NA': Status.NOT_APPLICABLE}
+            ods_status = status_map.get(status_str, Status.NOT_TESTED)
+
+            summary = audit_result['results']['summary']
+            prefix = "[IMAGE-ALT-AUTO]"
+            modifications = (
+                f"{prefix} {summary['total_images']} images analysées. "
+                f"Avec alternative: {summary['with_alternative']}, "
+                f"Sans alternative: {summary['without_alternative']}. "
+                f"Erreurs: {summary['total_errors']}, "
+                f"Avertissements: {summary['total_warnings']}. "
+                f"Couverture automatique: 60%."
+            )
+
+            comments_parts = []
+            if summary['without_alternative'] > 0:
+                comments_parts.append(
+                    f"{summary['without_alternative']} image(s) sans alternative textuelle"
+                )
+            if summary['total_warnings'] > 0:
+                comments_parts.append(
+                    f"{summary['total_warnings']} avertissement(s) à vérifier"
+                )
+            comments_parts.append(
+                "Vérification manuelle requise: pertinence des alternatives (critère 1.3)"
+            )
+            comments = "; ".join(comments_parts)
+
+            return {
+                'status': ods_status,
+                'modifications': modifications,
+                'comments': comments
+            }, ""
+
+        except Exception as e:
+            error_msg = str(e)
+            if log:
+                log(f"   ⚠️ Erreur test images 1.1: {error_msg}")
             return None, error_msg
 
     def _run_section2_tests(self, html: str, url: str) -> Dict:
