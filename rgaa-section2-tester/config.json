@@ -1,0 +1,44 @@
+{
+    "version": "1.0.0",
+    "langue": "fr",
+
+    "crawler": {
+        "max_pages": 50,
+        "timeout": 30,
+        "user_agent": "RGAA-Tester/1.0 (Accessibility Checker)",
+        "respecter_robots_txt": true,
+        "delai_entre_requetes": 1.0,
+        "suivre_liens_externes": false
+    },
+
+    "analyse": {
+        "inclure_cadres_caches": false,
+        "longueur_titre_minimum": 3,
+        "detecter_titres_generiques": true
+    },
+
+    "titres_generiques": [
+        "frame",
+        "iframe",
+        "cadre",
+        "content",
+        "contenu",
+        "widget",
+        "embed",
+        "externe",
+        "external"
+    ],
+
+    "rapport": {
+        "dossier_sortie": "reports",
+        "format_date": "%Y-%m-%d_%H-%M-%S",
+        "inclure_code_html": true,
+        "inclure_captures": false
+    },
+
+    "gui": {
+        "theme": "default",
+        "largeur_fenetre": 900,
+        "hauteur_fenetre": 700
+    }
+}

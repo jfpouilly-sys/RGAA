@@ -1,0 +1,934 @@
+# -*- coding: utf-8 -*-
+"""
+Audit File Handler for RGAA Audit Analysis.
+
+Handles reading and writing grilleAudit files in ODS or XLSX format.
+"""
+
+import os
+import shutil
+import threading
+from datetime import datetime
+from typing import List, Dict, Optional
+
+# ODS support
+from odf.opendocument import load as odf_load, OpenDocumentSpreadsheet
+from odf.table import Table, TableRow, TableCell
+from odf.text import P
+
+# XLSX support
+try:
+    from openpyxl import load_workbook, Workbook
+    from openpyxl.worksheet.worksheet import Worksheet
+    XLSX_SUPPORT = True
+except ImportError:
+    XLSX_SUPPORT = False
+
+from .ods_models import (
+    Status,
+    Derogation,
+    AuditCriterion,
+    PageAudit,
+    AuditFile,
+    CRITERIA_THEMES,
+    get_all_criterion_ids
+)
+
+
+def get_cell_value(cell: TableCell) -> str:
+    """
+    Extract text value from an ODS cell.
+
+    Args:
+        cell: TableCell object
+
+    Returns:
+        String value of the cell
+    """
+    paragraphs = cell.getElementsByType(P)
+    if not paragraphs:
+        return ""
+    return " ".join([str(p.firstChild) if p.firstChild else "" for p in paragraphs]).strip()
+
+
+def set_cell_value(cell: TableCell, value: str):
+    """
+    Set text value in an ODS cell.
+
+    Args:
+        cell: TableCell object
+        value: String value to set
+    """
+    # Clear existing content
+    for child in list(cell.childNodes):
+        cell.removeChild(child)
+
+    # Add new paragraph with value
+    if value:
+        p = P(text=value)
+        cell.addElement(p)
+
+
+def expand_row(row: TableRow) -> List[str]:
+    """
+    Expand a row considering repeated cells.
+
+    ODS files use table:number-columns-repeated attribute for empty cells.
+
+    Args:
+        row: TableRow object
+
+    Returns:
+        List of cell values
+    """
+    values = []
+    for cell in row.getElementsByType(TableCell):
+        repeat = cell.getAttribute("numbercolumnsrepeated")
+        repeat = int(repeat) if repeat else 1
+        value = get_cell_value(cell)
+        values.extend([value] * repeat)
+    return values
+
+
+def ensure_cells_exist(row: TableRow, min_columns: int = 8):
+    """
+    Ensure a row has at least min_columns individual cells.
+
+    ODS files may use numbercolumnsrepeated for empty cells, which causes
+    issues when trying to update specific columns. This function expands
+    repeated cells into individual cells.
+
+    Args:
+        row: TableRow object
+        min_columns: Minimum number of columns to ensure
+    """
+    cells = row.getElementsByType(TableCell)
+    current_col = 0
+
+    for cell in list(cells):  # Use list() to allow modification during iteration
+        repeat = cell.getAttribute("numbercolumnsrepeated")
+        repeat = int(repeat) if repeat else 1
+
+        if repeat > 1 and current_col + repeat > min_columns:
+            # This repeated cell spans columns we need to write to
+            # We need to split it into individual cells
+
+            # Remove the repeat attribute
+            cell.removeAttribute("numbercolumnsrepeated")
+
+            # Add individual cells for the remaining repetitions
+            value = get_cell_value(cell)
+            parent = cell.parentNode
+            next_sibling = cell.nextSibling
+
+            for _ in range(repeat - 1):
+                new_cell = TableCell()
+                if value:
+                    new_cell.addElement(P(text=value))
+                if next_sibling:
+                    parent.insertBefore(new_cell, next_sibling)
+                else:
+                    parent.addElement(new_cell)
+
+            current_col += repeat
+        else:
+            current_col += repeat
+
+    # Add more cells if still not enough
+    cells = row.getElementsByType(TableCell)
+    actual_col_count = sum(
+        int(c.getAttribute("numbercolumnsrepeated") or 1)
+        for c in cells
+    )
+
+    while actual_col_count < min_columns:
+        new_cell = TableCell()
+        row.addElement(new_cell)
+        actual_col_count += 1
+
+
+def get_cell_at_column(row: TableRow, column_index: int) -> Optional[TableCell]:
+    """
+    Get the cell at a specific column index, considering repeated cells.
+
+    Args:
+        row: TableRow object
+        column_index: 0-based column index
+
+    Returns:
+        TableCell at the given column, or None if not found
+    """
+    current_col = 0
+    for cell in row.getElementsByType(TableCell):
+        repeat = cell.getAttribute("numbercolumnsrepeated")
+        repeat = int(repeat) if repeat else 1
+
+        if current_col <= column_index < current_col + repeat:
+            # If this is a repeated cell and we're not at the first position,
+            # we need to split it
+            if repeat > 1 and column_index > current_col:
+                # Split the repeated cell
+                cell.removeAttribute("numbercolumnsrepeated")
+                value = get_cell_value(cell)
+                parent = cell.parentNode
+
+                # Insert cells before (for positions before column_index)
+                for i in range(column_index - current_col):
+                    new_cell = TableCell()
+                    if value:
+                        new_cell.addElement(P(text=value))
+                    parent.insertBefore(new_cell, cell)
+
+                # Insert cells after (for positions after column_index)
+                next_sibling = cell.nextSibling
+                for i in range(current_col + repeat - column_index - 1):
+                    new_cell = TableCell()
+                    if value:
+                        new_cell.addElement(P(text=value))
+                    if next_sibling:
+                        parent.insertBefore(new_cell, next_sibling)
+                    else:
+                        parent.addElement(new_cell)
+
+            return cell
+
+        current_col += repeat
+
+    return None
+
+
+class RGAAAuditODSHandler:
+    """Handler for reading and writing RGAA audit files (.ods or .xlsx)."""
+
+    def __init__(self, filepath: str):
+        """
+        Initialize the audit file handler.
+
+        Args:
+            filepath: Path to the .ods or .xlsx file
+        """
+        self.filepath = filepath
+        self.doc = None  # ODS document
+        self.workbook = None  # XLSX workbook
+        self.audit_data = None
+        self._sheets_cache = {}
+        self._lock = threading.RLock()  # Reentrant lock for thread-safe operations
+
+        # Detect file type
+        ext = os.path.splitext(filepath)[1].lower()
+        self.is_xlsx = ext in ['.xlsx', '.xlsm', '.xls']
+        self.is_ods = ext == '.ods'
+
+        if self.is_xlsx and not XLSX_SUPPORT:
+            raise ImportError("openpyxl is required for XLSX support. Install it with: pip install openpyxl")
+
+    def load(self) -> AuditFile:
+        """
+        Load and parse the audit file (.ods or .xlsx).
+
+        Returns:
+            AuditFile object with parsed data
+        """
+        if not os.path.exists(self.filepath):
+            raise FileNotFoundError(f"File not found: {self.filepath}")
+
+        self.audit_data = AuditFile()
+
+        if self.is_xlsx:
+            self._load_xlsx()
+        else:
+            self._load_ods()
+
+        # Check for duplicate URLs
+        url_to_pages = {}
+        for page in self.audit_data.pages:
+            if page.url and page.url not in ["Absente", ""]:
+                if page.url in url_to_pages:
+                    url_to_pages[page.url].append(page.page_id)
+                else:
+                    url_to_pages[page.url] = [page.page_id]
+
+        for url, page_ids in url_to_pages.items():
+            if len(page_ids) > 1:
+                print(f"⚠️ ATTENTION: URL dupliquée - {url} utilisée par: {', '.join(page_ids)}")
+
+        return self.audit_data
+
+    def _load_ods(self):
+        """Load and parse an ODS file."""
+        self.doc = odf_load(self.filepath)
+
+        # Parse Échantillon sheet for metadata
+        self._parse_echantillon_sheet()
+
+        # Parse page audit sheets (P01-P20)
+        for i in range(1, 21):
+            page_id = f"P{i:02d}"
+            try:
+                page_audit = self._parse_page_sheet(page_id)
+                if page_audit:
+                    self.audit_data.pages.append(page_audit)
+            except Exception as e:
+                print(f"Warning: Could not parse sheet {page_id}: {e}")
+
+    def _load_xlsx(self):
+        """Load and parse an XLSX file."""
+        self.workbook = load_workbook(self.filepath, data_only=True)
+
+        # Parse Échantillon sheet for metadata AND page info
+        page_info_from_echantillon = self._parse_echantillon_sheet_xlsx()
+
+        # Parse page audit sheets (P01-P20)
+        for i in range(1, 21):
+            page_id = f"P{i:02d}"
+            try:
+                # Get title/URL from Échantillon sheet if available
+                echantillon_info = page_info_from_echantillon.get(page_id, {})
+
+                page_audit = self._parse_page_sheet_xlsx(page_id, echantillon_info)
+                if page_audit:
+                    self.audit_data.pages.append(page_audit)
+            except Exception as e:
+                print(f"Warning: Could not parse sheet {page_id}: {e}")
+
+    def _get_xlsx_sheet(self, sheet_name: str) -> Optional[Worksheet]:
+        """
+        Get an XLSX sheet by name.
+
+        Args:
+            sheet_name: Name of the sheet
+
+        Returns:
+            Worksheet object or None if not found
+        """
+        if not self.workbook:
+            return None
+
+        if sheet_name in self.workbook.sheetnames:
+            return self.workbook[sheet_name]
+        return None
+
+    def _parse_echantillon_sheet_xlsx(self) -> Dict[str, Dict]:
+        """
+        Parse the Échantillon (Sample) sheet for audit metadata and page info from XLSX.
+
+        Returns:
+            Dictionary mapping page_id to {'title': str, 'url': str}
+        """
+        page_info = {}
+        sheet = self._get_xlsx_sheet("Échantillon")
+        if not sheet:
+            return page_info
+
+        # Try to find metadata in typical locations
+        # Check if we have a metadata section (rows 3-6 with labels in column A)
+        for row_num in range(1, min(10, sheet.max_row + 1)):
+            cell_a = str(sheet.cell(row=row_num, column=1).value or "").lower()
+            cell_b = sheet.cell(row=row_num, column=2).value
+
+            if "date" in cell_a and cell_b:
+                self.audit_data.date = str(cell_b)
+            elif "auditeur" in cell_a and cell_b:
+                self.audit_data.auditor = str(cell_b)
+            elif "contexte" in cell_a and cell_b:
+                self.audit_data.context = str(cell_b)
+            elif "site" in cell_a and cell_b:
+                self.audit_data.site_url = str(cell_b)
+
+        # Find the page table by looking for header row with "N° page" or "page"
+        # or rows starting with P01, P02, etc.
+        header_row = None
+        page_id_col = None
+        title_col = None
+        url_col = None
+
+        for row_num in range(1, min(30, sheet.max_row + 1)):
+            for col_num in range(1, min(10, sheet.max_column + 1)):
+                cell_val = str(sheet.cell(row=row_num, column=col_num).value or "").lower()
+
+                # Look for header indicators
+                if "n°" in cell_val or "page" in cell_val.replace(" ", ""):
+                    # Check if this looks like a header row
+                    next_col_val = str(sheet.cell(row=row_num, column=col_num + 1).value or "").lower()
+                    if "titre" in next_col_val or "page" in next_col_val:
+                        header_row = row_num
+                        page_id_col = col_num
+                        title_col = col_num + 1
+                        url_col = col_num + 2
+                        break
+
+                # Also check if row starts with P01
+                if cell_val == "p01":
+                    # This row has data, previous might be header
+                    header_row = row_num - 1 if row_num > 1 else row_num
+                    page_id_col = col_num
+                    title_col = col_num + 1
+                    url_col = col_num + 2
+                    break
+
+            if header_row:
+                break
+
+        # If we found the table structure, extract page info
+        if page_id_col and title_col and url_col:
+            start_row = header_row + 1 if header_row else 1
+
+            for row_num in range(start_row, sheet.max_row + 1):
+                page_id_val = str(sheet.cell(row=row_num, column=page_id_col).value or "").strip().upper()
+
+                # Check if this looks like a page ID (P01, P02, etc.)
+                if page_id_val.startswith("P") and len(page_id_val) >= 2:
+                    # Normalize to P01 format
+                    try:
+                        page_num = int(page_id_val[1:])
+                        page_id = f"P{page_num:02d}"
+
+                        title = str(sheet.cell(row=row_num, column=title_col).value or "").strip()
+                        url = str(sheet.cell(row=row_num, column=url_col).value or "").strip()
+
+                        page_info[page_id] = {
+                            'title': title,
+                            'url': url
+                        }
+                    except (ValueError, IndexError):
+                        continue
+
+        return page_info
+
+    def _parse_page_sheet_xlsx(self, page_id: str, echantillon_info: Dict = None) -> Optional[PageAudit]:
+        """
+        Parse a page audit sheet (P01-P20) from XLSX.
+
+        Args:
+            page_id: Page identifier (P01, P02, etc.)
+            echantillon_info: Optional dict with 'title' and 'url' from Échantillon sheet
+
+        Returns:
+            PageAudit object or None if sheet not found
+        """
+        sheet = self._get_xlsx_sheet(page_id)
+        if not sheet:
+            return None
+
+        echantillon_info = echantillon_info or {}
+
+        # Prefer title/URL from Échantillon sheet if available
+        page_title = echantillon_info.get('title', '')
+        page_url = echantillon_info.get('url', '')
+
+        # If not from Échantillon, try to get from Pxx sheet row 2
+        if not page_title and not page_url:
+            cell_value = sheet.cell(row=2, column=1).value
+            if cell_value:
+                cell_value = str(cell_value).strip()
+
+                # Check if the cell starts with a URL (http:// or https://)
+                if cell_value.startswith(('http://', 'https://')):
+                    page_url = cell_value
+                    page_title = ""
+                elif ' : http' in cell_value:
+                    idx = cell_value.find(' : http')
+                    if idx > 0:
+                        page_title = cell_value[:idx].strip()
+                        page_url = cell_value[idx + 3:].strip()
+                    else:
+                        page_title = cell_value
+                else:
+                    parts = cell_value.split(':', 1)
+                    if len(parts) == 2 and parts[1].strip().startswith('//'):
+                        page_url = cell_value
+                        page_title = ""
+                    elif len(parts) == 2:
+                        page_title = parts[0].strip()
+                        page_url = parts[1].strip()
+                    else:
+                        page_title = cell_value
+
+        page_audit = PageAudit(
+            page_id=page_id,
+            title=page_title,
+            url=page_url
+        )
+
+        # Parse criterion rows (starting from row 4)
+        for row_num in range(4, sheet.max_row + 1):
+            # Column A: Thématique
+            # Column B: Critère
+            # Column C: Recommandation
+            # Column D: Statut
+            # Column E: Dérogation
+            # Column F: Modifications
+            # Column G: Commentaires
+            # Column H: Date de modification
+
+            theme = str(sheet.cell(row=row_num, column=1).value or "")
+            criterion_id = str(sheet.cell(row=row_num, column=2).value or "")
+            description = str(sheet.cell(row=row_num, column=3).value or "")
+            status_str = str(sheet.cell(row=row_num, column=4).value or "NT")
+            derogation_str = str(sheet.cell(row=row_num, column=5).value or "N")
+            modifications = str(sheet.cell(row=row_num, column=6).value or "")
+            comments = str(sheet.cell(row=row_num, column=7).value or "")
+            modification_date = str(sheet.cell(row=row_num, column=8).value or "")
+
+            # Skip if no criterion ID
+            if not criterion_id or not criterion_id[0].isdigit():
+                continue
+
+            criterion = AuditCriterion(
+                theme=theme,
+                criterion_id=criterion_id,
+                description=description,
+                status=Status.from_string(status_str),
+                derogation=Derogation.from_string(derogation_str),
+                modifications=modifications,
+                comments=comments,
+                modification_date=modification_date
+            )
+
+            page_audit.criteria.append(criterion)
+
+        return page_audit
+
+    def _get_sheet_by_name(self, sheet_name: str) -> Optional[Table]:
+        """
+        Get a sheet by name.
+
+        Args:
+            sheet_name: Name of the sheet
+
+        Returns:
+            Table object or None if not found
+        """
+        if sheet_name in self._sheets_cache:
+            return self._sheets_cache[sheet_name]
+
+        tables = self.doc.spreadsheet.getElementsByType(Table)
+        for table in tables:
+            name = table.getAttribute("name")
+            if name == sheet_name:
+                self._sheets_cache[sheet_name] = table
+                return table
+        return None
+
+    def _parse_echantillon_sheet(self):
+        """Parse the Échantillon (Sample) sheet for audit metadata."""
+        sheet = self._get_sheet_by_name("Échantillon")
+        if not sheet:
+            return
+
+        rows = sheet.getElementsByType(TableRow)
+        if len(rows) < 7:
+            return
+
+        # Row 3: Date
+        row_3 = expand_row(rows[2])
+        if len(row_3) > 1:
+            self.audit_data.date = row_3[1]
+
+        # Row 4: Auditeur
+        row_4 = expand_row(rows[3])
+        if len(row_4) > 1:
+            self.audit_data.auditor = row_4[1]
+
+        # Row 5: Contexte
+        row_5 = expand_row(rows[4])
+        if len(row_5) > 1:
+            self.audit_data.context = row_5[1]
+
+        # Row 6: Site
+        row_6 = expand_row(rows[5])
+        if len(row_6) > 1:
+            self.audit_data.site_url = row_6[1]
+
+    def _parse_page_sheet(self, page_id: str) -> Optional[PageAudit]:
+        """
+        Parse a page audit sheet (P01-P20).
+
+        Args:
+            page_id: Page identifier (P01, P02, etc.)
+
+        Returns:
+            PageAudit object or None if sheet not found
+        """
+        sheet = self._get_sheet_by_name(page_id)
+        if not sheet:
+            return None
+
+        rows = sheet.getElementsByType(TableRow)
+        if len(rows) < 4:
+            return None
+
+        # Row 2: [Page Title] : [URL] or just [URL]
+        row_2 = expand_row(rows[1])
+        page_title = ""
+        page_url = ""
+        if len(row_2) > 0 and row_2[0]:
+            cell_value = row_2[0].strip()
+
+            # Check if the cell starts with a URL (http:// or https://)
+            if cell_value.startswith(('http://', 'https://')):
+                # Cell contains just a URL, no title
+                page_url = cell_value
+                page_title = ""
+            elif ' : http' in cell_value:
+                # Format "Title : URL" - split on " : " followed by http
+                idx = cell_value.find(' : http')
+                if idx > 0:
+                    page_title = cell_value[:idx].strip()
+                    page_url = cell_value[idx + 3:].strip()  # Skip " : "
+                else:
+                    page_title = cell_value
+            else:
+                # Try simple colon split for other formats
+                parts = cell_value.split(':', 1)
+                if len(parts) == 2 and parts[1].strip().startswith('//'):
+                    # Looks like "http://..." was split, reconstruct
+                    page_url = cell_value
+                    page_title = ""
+                elif len(parts) == 2:
+                    page_title = parts[0].strip()
+                    page_url = parts[1].strip()
+                else:
+                    page_title = cell_value
+
+        page_audit = PageAudit(
+            page_id=page_id,
+            title=page_title,
+            url=page_url
+        )
+
+        # Parse criterion rows (starting from row 4, index 3)
+        for i in range(3, len(rows)):
+            row_values = expand_row(rows[i])
+            if len(row_values) < 4:
+                continue
+
+            # Column A: Thématique
+            # Column B: Critère
+            # Column C: Recommandation
+            # Column D: Statut
+            # Column E: Dérogation
+            # Column F: Modifications
+            # Column G: Commentaires
+            # Column H: Date de modification
+
+            theme = row_values[0] if len(row_values) > 0 else ""
+            criterion_id = row_values[1] if len(row_values) > 1 else ""
+            description = row_values[2] if len(row_values) > 2 else ""
+            status_str = row_values[3] if len(row_values) > 3 else "NT"
+            derogation_str = row_values[4] if len(row_values) > 4 else "N"
+            modifications = row_values[5] if len(row_values) > 5 else ""
+            comments = row_values[6] if len(row_values) > 6 else ""
+            modification_date = row_values[7] if len(row_values) > 7 else ""
+
+            # Skip if no criterion ID
+            if not criterion_id or not criterion_id[0].isdigit():
+                continue
+
+            criterion = AuditCriterion(
+                theme=theme,
+                criterion_id=criterion_id,
+                description=description,
+                status=Status.from_string(status_str),
+                derogation=Derogation.from_string(derogation_str),
+                modifications=modifications,
+                comments=comments,
+                modification_date=modification_date
+            )
+
+            page_audit.criteria.append(criterion)
+
+        return page_audit
+
+    def get_sample_pages(self) -> List[Dict]:
+        """
+        Extract page list from Échantillon sheet.
+
+        Returns:
+            List of dictionaries with page info
+        """
+        if not self.audit_data:
+            self.load()
+
+        pages = []
+        for page in self.audit_data.pages:
+            pages.append({
+                'page_id': page.page_id,
+                'title': page.title,
+                'url': page.url
+            })
+        return pages
+
+    def get_page_audit(self, page_id: str) -> Optional[PageAudit]:
+        """
+        Get audit data for a specific page.
+
+        Args:
+            page_id: Page identifier (P01, P02, etc.)
+
+        Returns:
+            PageAudit object or None if not found
+        """
+        if not self.audit_data:
+            self.load()
+
+        return self.audit_data.get_page(page_id)
+
+    def update_criterion(self, page_id: str, criterion_id: str,
+                        status: Status, derogation: Derogation = Derogation.NO,
+                        modifications: str = "", comments: str = ""):
+        """
+        Update a single criterion evaluation.
+
+        Thread-safe: uses lock for concurrent access.
+
+        Args:
+            page_id: Page identifier (P01, P02, etc.)
+            criterion_id: Criterion ID (e.g., "2.1")
+            status: Criterion status
+            derogation: Derogation flag
+            modifications: Required modifications
+            comments: Comments
+        """
+        with self._lock:
+            # Generate timestamp
+            timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+
+            # Update in-memory data
+            page = self.audit_data.get_page(page_id)
+            if page:
+                page.update_criterion(criterion_id, status, derogation, modifications, comments, timestamp)
+
+            # Update in file based on type
+            if self.is_xlsx:
+                self._update_criterion_xlsx(page_id, criterion_id, status, derogation, modifications, comments, timestamp)
+            else:
+                self._update_criterion_ods(page_id, criterion_id, status, derogation, modifications, comments, timestamp)
+
+    def _update_criterion_ods(self, page_id: str, criterion_id: str,
+                              status: Status, derogation: Derogation,
+                              modifications: str, comments: str, timestamp: str):
+        """Update criterion in ODS file."""
+        sheet = self._get_sheet_by_name(page_id)
+        if not sheet:
+            return
+
+        rows = sheet.getElementsByType(TableRow)
+
+        # Find the row for this criterion (starting from row 4, index 3)
+        for i in range(3, len(rows)):
+            row = rows[i]
+
+            # Get criterion ID from column B (index 1) using expand_row (read-only)
+            row_values = expand_row(row)
+            if len(row_values) < 2:
+                continue
+
+            row_criterion_id = row_values[1] if len(row_values) > 1 else ""
+            if row_criterion_id != criterion_id:
+                continue
+
+            # Found the row - now expand cells and update values
+            # First, expand all cells to individual cells
+            self._expand_row_cells(row, 8)
+
+            # Get all cells as a fresh list after expansion
+            cells = list(row.getElementsByType(TableCell))
+
+            # Column D (Status) - index 3
+            if len(cells) > 3:
+                set_cell_value(cells[3], status.value)
+
+            # Column E (Derogation) - index 4
+            if len(cells) > 4:
+                set_cell_value(cells[4], derogation.value)
+
+            # Column F (Modifications) - index 5
+            if len(cells) > 5:
+                set_cell_value(cells[5], modifications)
+
+            # Column G (Comments) - index 6
+            if len(cells) > 6:
+                set_cell_value(cells[6], comments)
+
+            # Column H (Modification Date) - index 7
+            if len(cells) > 7:
+                set_cell_value(cells[7], timestamp)
+
+            break
+
+    def _update_criterion_xlsx(self, page_id: str, criterion_id: str,
+                               status: Status, derogation: Derogation,
+                               modifications: str, comments: str, timestamp: str):
+        """Update criterion in XLSX file."""
+        sheet = self._get_xlsx_sheet(page_id)
+        if not sheet:
+            return
+
+        # Find the row for this criterion (starting from row 4)
+        for row_num in range(4, sheet.max_row + 1):
+            row_criterion_id = str(sheet.cell(row=row_num, column=2).value or "")
+            if row_criterion_id != criterion_id:
+                continue
+
+            # Found the row - update values
+            # Column D (Status)
+            sheet.cell(row=row_num, column=4).value = status.value
+
+            # Column E (Derogation)
+            sheet.cell(row=row_num, column=5).value = derogation.value
+
+            # Column F (Modifications)
+            sheet.cell(row=row_num, column=6).value = modifications
+
+            # Column G (Comments)
+            sheet.cell(row=row_num, column=7).value = comments
+
+            # Column H (Modification Date)
+            sheet.cell(row=row_num, column=8).value = timestamp
+
+            break
+
+    def _expand_row_cells(self, row: TableRow, min_columns: int):
+        """
+        Expand all repeated cells in a row to individual cells.
+
+        This method completely rebuilds the row with individual cells
+        to ensure proper column ordering.
+
+        Args:
+            row: TableRow object
+            min_columns: Minimum number of columns needed
+        """
+        # First, extract all cell values considering repeats
+        cell_values = []
+        for cell in row.getElementsByType(TableCell):
+            repeat = cell.getAttribute("numbercolumnsrepeated")
+            repeat = int(repeat) if repeat else 1
+            value = get_cell_value(cell)
+            # Limit repeat to reasonable number (avoid memory issues)
+            repeat = min(repeat, max(min_columns, 50))
+            cell_values.extend([value] * repeat)
+
+        # Remove all existing cells from row
+        cells_to_remove = list(row.getElementsByType(TableCell))
+        for cell in cells_to_remove:
+            try:
+                row.removeChild(cell)
+            except:
+                pass
+
+        # Create new individual cells with values
+        num_cells = max(len(cell_values), min_columns)
+        for i in range(num_cells):
+            new_cell = TableCell()
+            if i < len(cell_values) and cell_values[i]:
+                new_cell.addElement(P(text=cell_values[i]))
+            row.addElement(new_cell)
+
+    def update_page_audit(self, page_audit: PageAudit):
+        """
+        Update all criteria for a page.
+
+        Args:
+            page_audit: PageAudit object with updated data
+        """
+        for criterion in page_audit.criteria:
+            self.update_criterion(
+                page_id=page_audit.page_id,
+                criterion_id=criterion.criterion_id,
+                status=criterion.status,
+                derogation=criterion.derogation,
+                modifications=criterion.modifications,
+                comments=criterion.comments
+            )
+
+    def save(self, output_path: Optional[str] = None):
+        """
+        Save the modified audit file (.ods or .xlsx).
+
+        Thread-safe: uses lock for concurrent access.
+
+        Args:
+            output_path: Output file path (defaults to original path)
+        """
+        with self._lock:
+            output_path = output_path or self.filepath
+
+            # Create backup if overwriting original
+            if output_path == self.filepath:
+                backup_path = self.filepath + ".backup"
+                shutil.copy2(self.filepath, backup_path)
+
+            if self.is_xlsx:
+                if not self.workbook:
+                    raise ValueError("No XLSX workbook loaded")
+                self.workbook.save(output_path)
+            else:
+                if not self.doc:
+                    raise ValueError("No ODS document loaded")
+                self.doc.save(output_path)
+
+    def calculate_synthesis(self) -> Dict:
+        """
+        Calculate summary statistics.
+
+        Returns:
+            Dictionary with synthesis data
+        """
+        if not self.audit_data:
+            self.load()
+
+        return self.audit_data.get_global_statistics()
+
+    def export_page_to_csv(self, page_id: str, output_path: str) -> bool:
+        """
+        Export a page sheet directly to CSV file.
+
+        Reads all rows from the ODS sheet and writes them to CSV,
+        preserving the exact structure of the Pxx tab.
+
+        Args:
+            page_id: Page identifier (P01, P02, etc.)
+            output_path: Path to the output CSV file
+
+        Returns:
+            True if export successful, False otherwise
+        """
+        import csv
+
+        sheet = self._get_sheet_by_name(page_id)
+        if not sheet:
+            return False
+
+        rows = sheet.getElementsByType(TableRow)
+        if len(rows) < 4:
+            return False
+
+        with open(output_path, 'w', newline='', encoding='utf-8') as csvfile:
+            writer = csv.writer(csvfile, delimiter=';', quoting=csv.QUOTE_MINIMAL)
+
+            # Write header row (row 3, index 2)
+            if len(rows) > 2:
+                header_values = expand_row(rows[2])
+                # Take first 8 columns (A-H)
+                header = header_values[:8] if len(header_values) >= 8 else header_values
+                writer.writerow(header)
+
+            # Write all data rows (starting from row 4, index 3)
+            for i in range(3, len(rows)):
+                row_values = expand_row(rows[i])
+
+                # Skip completely empty rows
+                if not any(row_values[:8]):
+                    continue
+
+                # Take first 8 columns (A-H)
+                row_data = row_values[:8] if len(row_values) >= 8 else row_values
+                # Pad with empty strings if needed
+                while len(row_data) < 8:
+                    row_data.append('')
+
+                writer.writerow(row_data)
+
+        return True
